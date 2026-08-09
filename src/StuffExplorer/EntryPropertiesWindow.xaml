@@ -1,0 +1,73 @@
+<Window x:Class="StuffExplorer.EntryPropertiesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource Properties}" Width="660" Height="440" MinWidth="560" MinHeight="390"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        Icon="Assets/BW2StuffExplorer.ico" Loaded="Window_Loaded" Closing="Window_Closing"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="86" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="55" />
+        </Grid.RowDefinitions>
+
+        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,14">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="44" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="32" Height="36" VerticalAlignment="Center" HorizontalAlignment="Left">
+                    <Path Fill="#FAFBFC" Stroke="#92979E" StrokeThickness="1"
+                          Data="M5,1 L21,1 L29,9 L29,35 L5,35 Z M21,1 L21,9 L29,9" />
+                    <Path Stroke="#6A9FD2" StrokeThickness="1.5" Data="M10,17 L24,17 M10,22 L24,22 M10,27 L20,27" />
+                </Grid>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="HeaderNameText" FontSize="16" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    <TextBlock x:Name="HeaderTypeText" Foreground="#6B7078" Margin="0,3,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid Margin="22,18,22,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="125" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="{DynamicResource PropertyName}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="1" Text="{DynamicResource PropertyFullPath}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="1" Grid.Column="1" x:Name="PathText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="2" Text="{DynamicResource PropertyType}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="2" Grid.Column="1" x:Name="TypeText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="3" Text="{DynamicResource PropertyModified}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="3" Grid.Column="1" x:Name="ModifiedText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="4" Text="{DynamicResource PropertySize}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="4" Grid.Column="1" x:Name="SizeText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="5" Text="{DynamicResource PropertyOffset}" FontWeight="SemiBold" Margin="0,3,16,11" />
+                <TextBox Grid.Row="5" Grid.Column="1" x:Name="OffsetText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+
+                <TextBlock Grid.Row="6" Text="{DynamicResource PropertyArchive}" FontWeight="SemiBold" Margin="0,3,16,0" />
+                <TextBox Grid.Row="6" Grid.Column="1" x:Name="ArchiveText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" />
+            </Grid>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Background="#F8F9FA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,10">
+            <Button Content="Close" Width="88" Height="30" HorizontalAlignment="Right" Click="Close_Click" />
+        </Border>
+    </Grid>
+</Window>

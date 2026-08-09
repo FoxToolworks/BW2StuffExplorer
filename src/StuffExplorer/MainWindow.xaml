@@ -1,0 +1,498 @@
+<Window x:Class="StuffExplorer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:StuffExplorer"
+        Title="BW2StuffExplorer" Height="720" Width="1180" MinHeight="520" MinWidth="850"
+        Icon="Assets/BW2StuffExplorer.ico"
+        AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver"
+        PreviewKeyDown="Window_PreviewKeyDown" Closing="Window_Closing">
+    <Window.Resources>
+        <local:FileSizeConverter x:Key="FileSizeConverter" />
+
+        <!-- Shared compact Explorer-style chevron for folders and file groups. -->
+        <Style x:Key="ChevronToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Width" Value="15" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid Background="Transparent">
+                            <Path x:Name="Chevron" Data="M 4,3 L 8,7 L 4,11"
+                                  Stroke="#62676D" StrokeThickness="1"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  RenderTransformOrigin="0.5,0.5">
+                                <Path.RenderTransform>
+                                    <RotateTransform Angle="0" />
+                                </Path.RenderTransform>
+                            </Path>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chevron" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <RotateTransform Angle="90" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chevron" Property="Stroke" Value="#202124" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <DockPanel Background="{StaticResource WindowBrush}">
+        <Menu x:Name="MainMenu" DockPanel.Dock="Top" Background="#FFF0F5F9" Padding="5,1" Height="21">
+            <MenuItem Header="{DynamicResource MenuFile}">
+                <MenuItem Header="{DynamicResource OpenStuff}" InputGestureText="Ctrl+O" Click="OpenArchive_Click" />
+                <Separator />
+                <MenuItem x:Name="ExportSelectionMenuItem" Header="{DynamicResource ExportSelection}" InputGestureText="Ctrl+E" Click="ExportSelected_Click" IsEnabled="False" />
+                <MenuItem x:Name="ExportFolderMenuItem" Header="{DynamicResource ExportFolder}" Click="ExportFolder_Click" IsEnabled="False" />
+                <MenuItem x:Name="ExtractAllMenuItem" Header="{DynamicResource ExtractAll}" Click="ExportAll_Click" IsEnabled="False" />
+                <Separator />
+                <MenuItem Header="{DynamicResource Exit}" Click="Exit_Click" />
+            </MenuItem>
+            <MenuItem Header="{DynamicResource MenuEdit}">
+                <MenuItem x:Name="CopyFullPathMenuItem" Header="{DynamicResource CopyFullPath}" Click="CopyFullPath_Click" IsEnabled="False" />
+                <MenuItem x:Name="CopyFileNameMenuItem" Header="{DynamicResource CopyFileName}" Click="CopyFileName_Click" IsEnabled="False" />
+            </MenuItem>
+            <MenuItem Header="{DynamicResource MenuView}">
+                <MenuItem Header="{DynamicResource SortBy}">
+                    <MenuItem x:Name="SortByNameMenuItem" Header="{DynamicResource ColumnName}" IsCheckable="True" Click="SortByName_Click" />
+                    <MenuItem x:Name="SortByModifiedMenuItem" Header="{DynamicResource ColumnModified}" IsCheckable="True" Click="SortByModified_Click" />
+                    <MenuItem x:Name="SortByTypeMenuItem" Header="{DynamicResource ColumnType}" IsCheckable="True" Click="SortByType_Click" />
+                    <MenuItem x:Name="SortBySizeMenuItem" Header="{DynamicResource ColumnSize}" IsCheckable="True" Click="SortBySize_Click" />
+                    <MenuItem x:Name="SortByOffsetMenuItem" Header="{DynamicResource ColumnOffset}" IsCheckable="True" Click="SortByOffset_Click" />
+                    <Separator />
+                    <MenuItem x:Name="SortAscendingMenuItem" Header="{DynamicResource Ascending}" IsCheckable="True" Click="SortAscending_Click" />
+                    <MenuItem x:Name="SortDescendingMenuItem" Header="{DynamicResource Descending}" IsCheckable="True" Click="SortDescending_Click" />
+                </MenuItem>
+                <MenuItem Header="{DynamicResource GroupBy}">
+                    <MenuItem x:Name="GroupByNoneMenuItem" Header="{DynamicResource GroupNone}" IsCheckable="True" Click="GroupByNone_Click" />
+                    <MenuItem x:Name="GroupByTypeMenuItem" Header="{DynamicResource ColumnType}" IsCheckable="True" Click="GroupByType_Click" />
+                </MenuItem>
+                <Separator />
+                <MenuItem Header="{DynamicResource FocusSearch}" InputGestureText="Ctrl+F" Click="FocusSearch_Click" />
+                <MenuItem Header="{DynamicResource ClearSearch}" InputGestureText="Esc" Click="ClearSearch_Click" />
+                <MenuItem Header="{DynamicResource Refresh}" InputGestureText="F5" Click="Refresh_Click" />
+            </MenuItem>
+            <MenuItem Header="{DynamicResource MenuTools}">
+                <MenuItem Header="{DynamicResource Properties}" Click="Properties_Click" />
+            </MenuItem>
+            <MenuItem Header="{DynamicResource MenuHelp}">
+                <MenuItem Header="{DynamicResource About}" Click="About_Click" />
+            </MenuItem>
+        </Menu>
+
+        <Border x:Name="NavigationBar" DockPanel.Dock="Top" Background="#FFF0F5F9"
+                BorderBrush="#FFBCCDD9" BorderThickness="0,0,0,1" Padding="10,7,10,7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="330" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BackButton" Style="{StaticResource NavButtonStyle}" Content="&#xE72B;" ToolTip="{DynamicResource NavigateBack}" Click="Back_Click" IsEnabled="False" FontSize="16" />
+                    <Button x:Name="ForwardButton" Style="{StaticResource NavButtonStyle}" Content="&#xE72A;" ToolTip="{DynamicResource NavigateForward}" Click="Forward_Click" IsEnabled="False" FontSize="16" />
+                    <Button x:Name="UpButton" Style="{StaticResource NavButtonStyle}" Content="&#xE74A;" ToolTip="{DynamicResource NavigateUp}" Click="Up_Click" IsEnabled="False" FontSize="16" />
+                    <Button x:Name="RefreshButton" Style="{StaticResource NavButtonStyle}" Content="&#xE72C;" ToolTip="{DynamicResource Refresh}" Click="Refresh_Click" IsEnabled="False" FontSize="16" />
+                </StackPanel>
+                <Border Grid.Column="1" Background="#FFFBFCFD" BorderBrush="#FFBCCDD9" CornerRadius="4" Margin="8,0" Padding="5,2">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="BreadcrumbPanel" Orientation="Horizontal" VerticalAlignment="Center" />
+                    </ScrollViewer>
+                </Border>
+                <Border Grid.Column="2"
+        CornerRadius="4">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="#FFFBFCFD" />
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                            <Setter Property="BorderThickness" Value="1" />
+                            <Setter Property="CornerRadius" Value="4" />
+
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#FFF5F7F8" />
+                                    <Setter Property="BorderBrush" Value="#FFEAEAEA" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <TextBox x:Name="SearchBox"
+                 TextChanged="SearchBox_TextChanged"
+                 Padding="9,5,34,5"
+                 VerticalContentAlignment="Center"
+                 ToolTip="{DynamicResource SearchHint}"
+                 Background="Transparent"
+                 BorderThickness="0" BorderBrush="#FFBCCDD9" />
+
+                        <TextBlock x:Name="SearchHintText"
+                   Text="{DynamicResource SearchHint}"
+                   Foreground="#777"
+                   Margin="11,0,34,0"
+                   VerticalAlignment="Center"
+                   IsHitTestVisible="False" />
+
+                        <TextBlock x:Name="SearchIcon"
+                   Text="&#xE721;"
+                   FontFamily="Segoe MDL2 Assets"
+                   FontSize="12"
+                   Foreground="#62676D"
+                   Width="28"
+                   HorizontalAlignment="Right"
+                   TextAlignment="Center"
+                   VerticalAlignment="Center"
+                   IsHitTestVisible="False" />
+
+                        <Button x:Name="ClearSearchButton"
+                Content="&#xE711;"
+                FontFamily="Segoe MDL2 Assets"
+                FontSize="11"
+                ToolTip="{DynamicResource ClearSearch}"
+                Click="ClearSearch_Click"
+                Width="28"
+                Height="26"
+                HorizontalAlignment="Right"
+                Margin="0,1,2,1"
+                Background="Transparent"
+                BorderThickness="0"
+                Visibility="Collapsed" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <StatusBar DockPanel.Dock="Bottom" Background="White" BorderBrush="#FFBCCDD9" BorderThickness="0,1,0,0">
+            <StatusBarItem><TextBlock x:Name="StatusText" Text="{DynamicResource ReadyHint}" /></StatusBarItem>
+            <Separator />
+            <StatusBarItem x:Name="ExportProgressItem" Visibility="Collapsed" HorizontalAlignment="Right">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ProgressBar x:Name="ExportProgressBar" Width="180" Height="14" Minimum="0" Maximum="100" Margin="0,0,8,0" />
+                    <TextBlock x:Name="ExportProgressText" MinWidth="190" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <Button x:Name="CancelExportButton" Content="{DynamicResource Cancel}" Click="CancelExport_Click" Padding="10,2" />
+                </StackPanel>
+            </StatusBarItem>
+            <Separator x:Name="ExportProgressSeparator" Visibility="Collapsed" />
+            <StatusBarItem HorizontalAlignment="Right"><TextBlock x:Name="ResultCountText" /></StatusBarItem>
+        </StatusBar>
+
+        <Grid x:Name="WorkspaceGrid">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="280" MinWidth="180" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="White" BorderBrush="#FFF7F7F7" BorderThickness="0,0,1,0" Padding="7,8,4,0">
+                <TreeView x:Name="FolderTree" SelectedItemChanged="FolderTree_SelectedItemChanged" BorderThickness="0" Background="White" Margin="3,-8,-5,0">
+                    <TreeView.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="{DynamicResource ExportFolder}" Click="ExportFolder_Click" />
+                            <Separator />
+                            <MenuItem Header="{DynamicResource CopyFolderPath}" Click="CopyFolderPath_Click" />
+                        </ContextMenu>
+                    </TreeView.ContextMenu>
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                            <StackPanel Orientation="Horizontal" Height="24">
+                                <Grid Width="17" Height="16" Margin="1,0,6,0" VerticalAlignment="Center">
+                                    <Path x:Name="FolderShape" Fill="#F5C451" Stroke="#D79B25" StrokeThickness="0.7"
+                                          Data="M1,4 L6,4 L7.5,6 L15,6 L15,14 L1,14 Z" />
+                                    <Grid x:Name="ArchiveShape" Visibility="Collapsed">
+                                        <Path Fill="#ECEFF2" Stroke="#666B70" StrokeThickness="0.8"
+                                              Data="M2,5 L15,5 L15,14 L2,14 Z" />
+                                        <Path Fill="Transparent" Stroke="#666B70" StrokeThickness="0.8"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Data="M1,4 L16,4 M8.5,5 L8.5,14" />
+                                    </Grid>
+                                </Grid>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <HierarchicalDataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Parent}" Value="{x:Null}">
+                                    <Setter TargetName="FolderShape" Property="Visibility" Value="Collapsed" />
+                                    <Setter TargetName="ArchiveShape" Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </HierarchicalDataTemplate.Triggers>
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="BorderThickness" Value="0" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TreeViewItem">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <ToggleButton x:Name="Expander" Grid.Column="0"
+                                                          Style="{StaticResource ChevronToggleStyle}"
+                                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" />
+                                            <Border x:Name="SelectionBorder" Grid.Column="1" Background="Transparent"
+                                                    CornerRadius="4" Padding="1,0,3,0">
+                                                <ContentPresenter x:Name="PART_Header" ContentSource="Header"
+                                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                                            </Border>
+                                            <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Grid.Column="1" Margin="4,0,0,0" />
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="HasItems" Value="False">
+                                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                                            </Trigger>
+                                            <Trigger Property="IsExpanded" Value="False">
+                                                <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                                            </Trigger>
+                                            <Trigger SourceName="SelectionBorder" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="SelectionBorder" Property="Background" Value="{StaticResource HoverBrush}" />
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="SelectionBorder" Property="Background" Value="{StaticResource AccentBrush}" />
+                                            </Trigger>
+                                            <MultiTrigger>
+                                                <MultiTrigger.Conditions>
+                                                    <Condition Property="IsSelected" Value="True" />
+                                                    <Condition Property="Selector.IsSelectionActive" Value="False" />
+                                                </MultiTrigger.Conditions>
+                                                <Setter TargetName="SelectionBorder" Property="Background" Value="#E5F1FB" />
+                                            </MultiTrigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                </TreeView>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrush}" />
+
+            <Border Grid.Column="2" Background="White">
+                <DataGrid x:Name="FileGrid"
+              AutoGenerateColumns="False"
+              IsReadOnly="True"
+              SelectionMode="Extended"
+              SelectionUnit="FullRow"
+              SelectionChanged="FileGrid_SelectionChanged"
+              MouseDoubleClick="FileGrid_MouseDoubleClick"
+              Sorting="FileGrid_Sorting"
+              GridLinesVisibility="None"
+              BorderThickness="0"
+              HeadersVisibility="Column"
+              RowHeaderWidth="0"
+              CanUserAddRows="False"
+              Background="White"
+              BorderBrush="#FFF7F7F7">
+
+                    <DataGrid.Resources>
+                        <Style x:Key="CenteredCellText"
+                   TargetType="TextBlock">
+                            <Setter Property="VerticalAlignment"
+                        Value="Center" />
+                        </Style>
+                    </DataGrid.Resources>
+
+                    <DataGrid.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                            <Setter Property="BorderThickness" Value="0" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="Foreground" Value="#1F1F1F" />
+
+                            <Style.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Foreground" Value="#1F1F1F" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.CellStyle>
+
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="Foreground" Value="#1F1F1F" />
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                            <Setter Property="BorderThickness" Value="1" />
+
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#FFE5F3FF" />
+                                </Trigger>
+
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="#FFCCE8FF" />
+                                    <Setter Property="Foreground" Value="#1F1F1F" />
+                                    <Setter Property="BorderBrush" Value="Black" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    
+                    <DataGrid.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.ContainerStyle>
+                                <Style TargetType="GroupItem">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="GroupItem">
+                                                <Grid Margin="0,3,0,0">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <StackPanel Orientation="Horizontal"
+                                                    Height="26"
+                                                    Background="Transparent">
+                                                        <ToggleButton x:Name="GroupToggle"
+                                                          Style="{StaticResource ChevronToggleStyle}"
+                                                          IsChecked="True"
+                                                          Margin="4,0,3,0" />
+
+                                                        <TextBlock Text="{Binding Name}"
+                                                       FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" />
+
+                                                        <TextBlock Text="{Binding ItemCount, StringFormat={} ({0:N0})}"
+                                                       Foreground="#666"
+                                                       VerticalAlignment="Center" />
+                                                    </StackPanel>
+
+                                                    <ItemsPresenter x:Name="GroupItems"
+                                                        Grid.Row="1" />
+                                                </Grid>
+
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger SourceName="GroupToggle"
+                                                 Property="IsChecked"
+                                                 Value="False">
+                                                        <Setter TargetName="GroupItems"
+                                                    Property="Visibility"
+                                                    Value="Collapsed" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </GroupStyle.ContainerStyle>
+                        </GroupStyle>
+                    </DataGrid.GroupStyle>
+
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="{DynamicResource ExportSelection}"
+                          Click="ExportSelected_Click" />
+
+                            <Separator />
+
+                            <MenuItem Header="{DynamicResource CopyFullPath}"
+                          Click="CopyFullPath_Click" />
+
+                            <MenuItem Header="{DynamicResource CopyFileName}"
+                          Click="CopyFileName_Click" />
+
+                            <Separator />
+
+                            <MenuItem Header="{DynamicResource Properties}"
+                          Click="Properties_Click" />
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn x:Name="NameColumn"
+                                    Header="{DynamicResource ColumnName}"
+                                    Width="360"
+                                    MinWidth="260"
+                                    SortMemberPath="Name">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                                        <Grid Width="16"
+                                  Height="18"
+                                  Margin="0,0,7,0"
+                                  VerticalAlignment="Center">
+                                            <Path Fill="#FAFBFC"
+                                      Stroke="#92979E"
+                                      StrokeThickness="0.8"
+                                      Data="M2,1 L10,1 L14,5 L14,17 L2,17 Z M10,1 L10,5 L14,5" />
+
+                                            <Path Stroke="#6A9FD2"
+                                      StrokeThickness="1"
+                                      Data="M5,9 L11,9 M5,12 L11,12" />
+                                        </Grid>
+
+                                        <TextBlock Text="{Binding Name}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTextColumn x:Name="ModifiedColumn"
+                                Header="{DynamicResource ColumnModified}"
+                                Binding="{Binding ModifiedLocalTime, StringFormat={}{0:G}}"
+                                ElementStyle="{StaticResource CenteredCellText}"
+                                Width="155"
+                                MinWidth="135"
+                                SortMemberPath="ModifiedTimestamp" />
+
+                        <DataGridTextColumn x:Name="TypeColumn"
+                                Header="{DynamicResource ColumnType}"
+                                Binding="{Binding Extension}"
+                                ElementStyle="{StaticResource CenteredCellText}"
+                                Width="90"
+                                MinWidth="75"
+                                SortMemberPath="Extension" />
+
+                        <DataGridTextColumn x:Name="SizeColumn"
+                                Header="{DynamicResource ColumnSize}"
+                                Binding="{Binding Length, Converter={StaticResource FileSizeConverter}}"
+                                ElementStyle="{StaticResource CenteredCellText}"
+                                Width="105"
+                                MinWidth="90"
+                                SortMemberPath="Length" />
+
+                        <DataGridTextColumn x:Name="OffsetColumn"
+                                Header="{DynamicResource ColumnOffset}"
+                                Binding="{Binding Offset, StringFormat={}0x{0:X8}}"
+                                ElementStyle="{StaticResource CenteredCellText}"
+                                Width="120"
+                                MinWidth="105"
+                                SortMemberPath="Offset" />
+
+                        <DataGridTextColumn x:Name="PathColumn"
+                                Header="{DynamicResource ColumnPath}"
+                                Binding="{Binding Path}"
+                                ElementStyle="{StaticResource CenteredCellText}"
+                                Width="420"
+                                MinWidth="300"
+                                SortMemberPath="Path"
+                                Visibility="Collapsed" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
