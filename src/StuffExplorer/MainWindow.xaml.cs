@@ -7,22 +7,34 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace StuffExplorer;
 
 public partial class MainWindow : Window
 {
+    private const int SearchDebounceMilliseconds = 450;
+
+    private enum GroupMode
+    {
+        None,
+        FileType,
+        AssetCategory
+    }
+
     private readonly Dictionary<string, ArchiveTreeNode> _treeNodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _navigationHistory = [];
-    private IReadOnlyList<StuffEntry> _visibleEntries = Array.Empty<StuffEntry>();
+    private IReadOnlyList<AssetEntryViewModel> _allEntries = Array.Empty<AssetEntryViewModel>();
+    private IReadOnlyList<AssetEntryViewModel> _visibleEntries = Array.Empty<AssetEntryViewModel>();
     private CancellationTokenSource? _exportCancellation;
     private CancellationTokenSource? _searchCancellation;
     private StuffArchive? _archive;
+    private Bw2ArchiveAnalysis? _analysis;
     private string _selectedFolder = string.Empty;
     private int _historyIndex = -1;
-    private string _sortProperty = nameof(StuffEntry.Name);
+    private string _sortProperty = nameof(AssetEntryViewModel.Name);
     private ListSortDirection _sortDirection = ListSortDirection.Ascending;
-    private bool _groupByType = true;
+    private GroupMode _groupMode = GroupMode.FileType;
     private bool _closeAfterCancellation;
     private bool _suppressTreeSelection;
 
@@ -57,8 +69,18 @@ public partial class MainWindow : Window
         {
             IsEnabled = false;
             StatusText.Text = S("StatusReading");
-            var archive = await Task.Run(() => StuffArchive.Open(path));
+            var result = await Task.Run(() =>
+            {
+                var loadedArchive = StuffArchive.Open(path);
+                var analysis = Bw2ArchiveAnalyzer.Analyze(loadedArchive);
+                return (Archive: loadedArchive, Analysis: analysis);
+            });
+            var archive = result.Archive;
             _archive = archive;
+            _analysis = result.Analysis;
+            _allEntries = archive.Entries
+                .Select(entry => new AssetEntryViewModel(entry, result.Analysis.GetClassification(entry)))
+                .ToArray();
             Title = $"{Path.GetFileName(archive.FilePath)} — BW2StuffExplorer";
             _selectedFolder = string.Empty;
             BuildTree(archive);
@@ -114,9 +136,17 @@ public partial class MainWindow : Window
         if (_archive is null)
         {
             _searchCancellation = null;
-            _visibleEntries = Array.Empty<StuffEntry>();
+            _allEntries = Array.Empty<AssetEntryViewModel>();
+            _visibleEntries = Array.Empty<AssetEntryViewModel>();
             FileGrid.ItemsSource = _visibleEntries;
             ResultCountText.Text = string.Empty;
+            return;
+        }
+
+        var search = SearchBox.Text.Trim();
+        if (search.Length == 1 && !char.IsLetterOrDigit(search[0]))
+        {
+            ResultCountText.Text = S("StatusSearchMoreCharacters");
             return;
         }
 
@@ -124,25 +154,26 @@ public partial class MainWindow : Window
         var cancellationToken = cancellation.Token;
         _searchCancellation = cancellation;
         var archive = _archive;
+        var allEntries = _allEntries;
         var selectedFolder = _selectedFolder;
-        var search = SearchBox.Text.Trim();
-        var selectedPaths = FileGrid.SelectedItems.Cast<StuffEntry>()
+
+        var selectedPaths = FileGrid.SelectedItems.Cast<AssetEntryViewModel>()
             .Select(entry => entry.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         try
         {
             if (debounce)
-                await Task.Delay(250, cancellationToken);
+                await Task.Delay(SearchDebounceMilliseconds, cancellationToken);
 
             var filtered = await Task.Run(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return string.IsNullOrEmpty(search)
-                    ? archive.Entries
+                    ? allEntries
                         .Where(entry => entry.DirectoryPath.Equals(selectedFolder, StringComparison.OrdinalIgnoreCase))
                         .ToArray()
-                    : archive.Entries
+                    : allEntries
                         .Where(entry => IsInFolder(entry, selectedFolder)
                             && entry.Path.Contains(search, StringComparison.OrdinalIgnoreCase))
                         .ToArray();
@@ -159,6 +190,7 @@ public partial class MainWindow : Window
             foreach (var entry in _visibleEntries.Where(entry => selectedPaths.Contains(entry.Path)))
                 FileGrid.SelectedItems.Add(entry);
 
+            ResetFileGridScrollPosition();
             ResultCountText.Text = string.Format(S("StatusShown"), _visibleEntries.Count);
             UpdateCommandState();
         }
@@ -174,7 +206,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool IsInFolder(StuffEntry entry, string folder) => string.IsNullOrEmpty(folder)
+    private static bool IsInFolder(AssetEntryViewModel entry, string folder) => string.IsNullOrEmpty(folder)
         || entry.DirectoryPath.Equals(folder, StringComparison.OrdinalIgnoreCase)
         || entry.DirectoryPath.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase);
 
@@ -186,6 +218,18 @@ public partial class MainWindow : Window
 
         PathColumn.Visibility = visibility;
     }
+
+    private void ResetFileGridScrollPosition() =>
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            new Action(() =>
+            {
+                if (VisualTreeSearch.FindDescendant<ScrollViewer>(FileGrid) is not { } scrollViewer)
+                    return;
+
+                scrollViewer.ScrollToTop();
+                scrollViewer.ScrollToLeftEnd();
+            }));
 
     private void NavigateTo(string folderPath, bool addToHistory, bool selectTreeNode = true)
     {
@@ -332,16 +376,23 @@ public partial class MainWindow : Window
             view.SortDescriptions.Clear();
             view.GroupDescriptions.Clear();
 
-            if (_groupByType)
+            var groupProperty = _groupMode switch
             {
-                view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(StuffEntry.Extension), new FileTypeGroupConverter()));
-                if (_sortProperty != nameof(StuffEntry.Extension))
-                    view.SortDescriptions.Add(new SortDescription(nameof(StuffEntry.Extension), ListSortDirection.Ascending));
+                GroupMode.FileType => nameof(AssetEntryViewModel.TypeDisplay),
+                GroupMode.AssetCategory => nameof(AssetEntryViewModel.CategoryDisplay),
+                _ => null
+            };
+
+            if (groupProperty is not null)
+            {
+                view.GroupDescriptions.Add(new PropertyGroupDescription(groupProperty));
+                if (_sortProperty != groupProperty)
+                    view.SortDescriptions.Add(new SortDescription(groupProperty, ListSortDirection.Ascending));
             }
 
             view.SortDescriptions.Add(new SortDescription(_sortProperty, _sortDirection));
-            if (_sortProperty != nameof(StuffEntry.Name))
-                view.SortDescriptions.Add(new SortDescription(nameof(StuffEntry.Name), ListSortDirection.Ascending));
+            if (_sortProperty != nameof(AssetEntryViewModel.Name))
+                view.SortDescriptions.Add(new SortDescription(nameof(AssetEntryViewModel.Name), ListSortDirection.Ascending));
         }
 
         UpdateViewMenuChecks();
@@ -360,9 +411,9 @@ public partial class MainWindow : Window
         ApplyViewSettings();
     }
 
-    private void SetGrouping(bool groupByType)
+    private void SetGrouping(GroupMode groupMode)
     {
-        _groupByType = groupByType;
+        _groupMode = groupMode;
         ApplyViewSettings();
     }
 
@@ -371,15 +422,16 @@ public partial class MainWindow : Window
         if (!IsInitialized)
             return;
 
-        SortByNameMenuItem.IsChecked = _sortProperty == nameof(StuffEntry.Name);
-        SortByModifiedMenuItem.IsChecked = _sortProperty == nameof(StuffEntry.ModifiedTimestamp);
-        SortByTypeMenuItem.IsChecked = _sortProperty == nameof(StuffEntry.Extension);
-        SortBySizeMenuItem.IsChecked = _sortProperty == nameof(StuffEntry.Length);
-        SortByOffsetMenuItem.IsChecked = _sortProperty == nameof(StuffEntry.Offset);
+        SortByNameMenuItem.IsChecked = _sortProperty == nameof(AssetEntryViewModel.Name);
+        SortByModifiedMenuItem.IsChecked = _sortProperty == nameof(AssetEntryViewModel.ModifiedTimestamp);
+        SortByTypeMenuItem.IsChecked = _sortProperty == nameof(AssetEntryViewModel.TypeDisplay);
+        SortBySizeMenuItem.IsChecked = _sortProperty == nameof(AssetEntryViewModel.Length);
+        SortByOffsetMenuItem.IsChecked = _sortProperty == nameof(AssetEntryViewModel.Offset);
         SortAscendingMenuItem.IsChecked = _sortDirection == ListSortDirection.Ascending;
         SortDescendingMenuItem.IsChecked = _sortDirection == ListSortDirection.Descending;
-        GroupByNoneMenuItem.IsChecked = !_groupByType;
-        GroupByTypeMenuItem.IsChecked = _groupByType;
+        GroupByNoneMenuItem.IsChecked = _groupMode == GroupMode.None;
+        GroupByTypeMenuItem.IsChecked = _groupMode == GroupMode.FileType;
+        GroupByAssetCategoryMenuItem.IsChecked = _groupMode == GroupMode.AssetCategory;
     }
 
     private void UpdateColumnSortIndicators()
@@ -411,15 +463,16 @@ public partial class MainWindow : Window
         ApplyViewSettings();
     }
 
-    private void SortByName_Click(object sender, RoutedEventArgs e) => SetSort(nameof(StuffEntry.Name));
-    private void SortByModified_Click(object sender, RoutedEventArgs e) => SetSort(nameof(StuffEntry.ModifiedTimestamp));
-    private void SortByType_Click(object sender, RoutedEventArgs e) => SetSort(nameof(StuffEntry.Extension));
-    private void SortBySize_Click(object sender, RoutedEventArgs e) => SetSort(nameof(StuffEntry.Length));
-    private void SortByOffset_Click(object sender, RoutedEventArgs e) => SetSort(nameof(StuffEntry.Offset));
+    private void SortByName_Click(object sender, RoutedEventArgs e) => SetSort(nameof(AssetEntryViewModel.Name));
+    private void SortByModified_Click(object sender, RoutedEventArgs e) => SetSort(nameof(AssetEntryViewModel.ModifiedTimestamp));
+    private void SortByType_Click(object sender, RoutedEventArgs e) => SetSort(nameof(AssetEntryViewModel.TypeDisplay));
+    private void SortBySize_Click(object sender, RoutedEventArgs e) => SetSort(nameof(AssetEntryViewModel.Length));
+    private void SortByOffset_Click(object sender, RoutedEventArgs e) => SetSort(nameof(AssetEntryViewModel.Offset));
     private void SortAscending_Click(object sender, RoutedEventArgs e) => SetSortDirection(ListSortDirection.Ascending);
     private void SortDescending_Click(object sender, RoutedEventArgs e) => SetSortDirection(ListSortDirection.Descending);
-    private void GroupByNone_Click(object sender, RoutedEventArgs e) => SetGrouping(false);
-    private void GroupByType_Click(object sender, RoutedEventArgs e) => SetGrouping(true);
+    private void GroupByNone_Click(object sender, RoutedEventArgs e) => SetGrouping(GroupMode.None);
+    private void GroupByType_Click(object sender, RoutedEventArgs e) => SetGrouping(GroupMode.FileType);
+    private void GroupByAssetCategory_Click(object sender, RoutedEventArgs e) => SetGrouping(GroupMode.AssetCategory);
 
     private void FolderTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
@@ -463,7 +516,10 @@ public partial class MainWindow : Window
         if (_archive is null || FileGrid.SelectedItems.Count == 0)
             return;
 
-        var entries = FileGrid.SelectedItems.Cast<StuffEntry>().ToArray();
+        var entries = FileGrid.SelectedItems
+            .Cast<AssetEntryViewModel>()
+            .Select(item => item.Entry)
+            .ToArray();
         if (entries.Length == 1)
             await ExportSingleEntryAsync(entries[0]);
         else
@@ -494,7 +550,10 @@ public partial class MainWindow : Window
         if (_archive is null)
             return;
 
-        await ExportEntriesAsync(_archive.Entries.Where(IsInSelectedFolder).ToArray());
+        await ExportEntriesAsync(_allEntries
+            .Where(IsInSelectedFolder)
+            .Select(item => item.Entry)
+            .ToArray());
     }
 
     private async void ExportAll_Click(object sender, RoutedEventArgs e)
@@ -503,7 +562,7 @@ public partial class MainWindow : Window
             await ExportEntriesAsync(_archive.Entries);
     }
 
-    private bool IsInSelectedFolder(StuffEntry entry) => IsInFolder(entry, _selectedFolder);
+    private bool IsInSelectedFolder(AssetEntryViewModel entry) => IsInFolder(entry, _selectedFolder);
 
     private async Task ExportEntriesAsync(IReadOnlyCollection<StuffEntry> entries)
     {
@@ -627,7 +686,7 @@ public partial class MainWindow : Window
         MessageBox.Show(this, exception.Message, S("ErrorExportTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
-    private StuffEntry? SelectedEntry => FileGrid.SelectedItem as StuffEntry;
+    private AssetEntryViewModel? SelectedEntry => FileGrid.SelectedItem as AssetEntryViewModel;
 
     private void CopyFullPath_Click(object sender, RoutedEventArgs e)
     {
@@ -643,8 +702,8 @@ public partial class MainWindow : Window
 
     private void Properties_Click(object sender, RoutedEventArgs e)
     {
-        if (_archive is not null && SelectedEntry is { } entry)
-            new EntryPropertiesWindow(entry, _archive.FilePath) { Owner = this }.ShowDialog();
+        if (_archive is not null && _analysis is not null && SelectedEntry is { } entry)
+            new EntryPropertiesWindow(entry, _archive, _analysis) { Owner = this }.ShowDialog();
     }
 
     private void FileGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => Properties_Click(sender, e);

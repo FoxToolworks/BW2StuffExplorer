@@ -1,14 +1,73 @@
 <Window x:Class="StuffExplorer.EntryPropertiesWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="{DynamicResource Properties}" Width="660" Height="440" MinWidth="560" MinHeight="390"
+        Title="{DynamicResource Properties}" Width="960" Height="540" MinWidth="700" MinHeight="450"
         ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
         Icon="Assets/BW2StuffExplorer.ico" Loaded="Window_Loaded" Closing="Window_Closing"
         PreviewKeyDown="Window_PreviewKeyDown">
+    <Window.Resources>
+        <Style x:Key="PropertyValueToolTipStyle" TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="720" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="PropertyDetailRowTemplate">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="{Binding Section}" FontSize="13" FontWeight="SemiBold"
+                           Foreground="#48515C" Margin="1,10,0,6">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StartsSection}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" Margin="0,0,0,-1" Background="White">
+                    <Grid MinHeight="36">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="190" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="#F6F8FA" BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="0,0,1,0" Padding="10,7">
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </Border>
+                        <TextBox Grid.Column="1" Text="{Binding Value}" IsReadOnly="True"
+                                 BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                                 VerticalContentAlignment="Center" Padding="10,6">
+                            <TextBox.ToolTip>
+                                <ToolTip Style="{StaticResource PropertyValueToolTipStyle}"
+                                         Content="{Binding Value}" />
+                            </TextBox.ToolTip>
+                        </TextBox>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
     <Grid Background="White">
         <Grid.RowDefinitions>
-            <RowDefinition Height="86" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="66" />
+            <RowDefinition />
             <RowDefinition Height="55" />
         </Grid.RowDefinitions>
 
@@ -31,42 +90,153 @@
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <Grid Margin="22,18,22,12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="125" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+        <TabControl x:Name="PropertiesTabs" Grid.Row="1" Margin="14,10,14,10"
+                    Background="White" BorderBrush="{StaticResource BorderBrush}"
+                    SelectionChanged="PropertiesTabs_SelectionChanged">
+            <TabItem Header="{DynamicResource PropertyTabGeneral}">
+                <ScrollViewer x:Name="GeneralScrollViewer"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="-2,-2,-2,-2">
+                    <ItemsControl x:Name="GeneralDetailsList" Margin="18,0,18,10"
+                                  ItemTemplate="{StaticResource PropertyDetailRowTemplate}" />
+                </ScrollViewer>
+            </TabItem>
 
-                <TextBlock Grid.Row="0" Text="{DynamicResource PropertyName}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+            <TabItem Header="Details">
+                <ScrollViewer x:Name="FileDetailsScrollViewer"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="-2,-2,-2,-2">
+                    <ItemsControl x:Name="FileDetailsList" Margin="18,0,18,10"
+                                  ItemTemplate="{StaticResource PropertyDetailRowTemplate}" />
+                </ScrollViewer>
+            </TabItem>
 
-                <TextBlock Grid.Row="1" Text="{DynamicResource PropertyFullPath}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="1" Grid.Column="1" x:Name="PathText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+            <TabItem Header="{DynamicResource PropertyTabReferences}">
+                <Grid Margin="10">
+                    <DataGrid x:Name="ReferencesGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                              CanUserAddRows="False" CanUserDeleteRows="False"
+                              CanUserReorderColumns="True" CanUserResizeColumns="True"
+                              HeadersVisibility="Column" RowHeaderWidth="0" GridLinesVisibility="Horizontal"
+                              HorizontalGridLinesBrush="{StaticResource BorderBrush}"
+                              BorderBrush="{StaticResource BorderBrush}" Background="White"
+                              SelectionMode="Extended" SelectionUnit="FullRow"
+                              ColumnHeaderHeight="30" RowHeight="30"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              ScrollViewer.CanContentScroll="True"
+                              EnableRowVirtualization="True" EnableColumnVirtualization="True"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              Visibility="Collapsed" Margin="0,0,6,0">
+                        <DataGrid.CellStyle>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="VerticalContentAlignment" Value="Center" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Foreground" Value="#1F1F1F" />
 
-                <TextBlock Grid.Row="2" Text="{DynamicResource PropertyType}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="2" Grid.Column="1" x:Name="TypeText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Foreground" Value="#1F1F1F" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.CellStyle>
 
-                <TextBlock Grid.Row="3" Text="{DynamicResource PropertyModified}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="3" Grid.Column="1" x:Name="ModifiedText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,0,0,11" />
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="Height" Value="30" />
+                                <Setter Property="VerticalContentAlignment" Value="Center" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Foreground" Value="#1F1F1F" />
+                                <Setter Property="BorderBrush" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
 
-                <TextBlock Grid.Row="4" Text="{DynamicResource PropertySize}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="4" Grid.Column="1" x:Name="SizeText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#FFE5F3FF" />
+                                    </Trigger>
 
-                <TextBlock Grid.Row="5" Text="{DynamicResource PropertyOffset}" FontWeight="SemiBold" Margin="0,3,16,11" />
-                <TextBox Grid.Row="5" Grid.Column="1" x:Name="OffsetText" IsReadOnly="True" BorderThickness="0" Background="Transparent" Margin="0,0,0,11" />
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#FFCCE8FF" />
+                                        <Setter Property="Foreground" Value="#1F1F1F" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
 
-                <TextBlock Grid.Row="6" Text="{DynamicResource PropertyArchive}" FontWeight="SemiBold" Margin="0,3,16,0" />
-                <TextBox Grid.Row="6" Grid.Column="1" x:Name="ArchiveText" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" />
-            </Grid>
-        </ScrollViewer>
+                        <DataGrid.Resources>
+                            <Style TargetType="ToolTip">
+                                <Setter Property="MaxWidth" Value="720" />
+                                <Setter Property="ContentTemplate">
+                                    <Setter.Value>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                        </DataTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                            <Style x:Key="ReferenceCellText" TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                <Setter Property="TextWrapping" Value="NoWrap" />
+                                <Setter Property="ToolTipService.InitialShowDelay" Value="350" />
+                                <Setter Property="ToolTipService.ShowDuration" Value="30000" />
+                            </Style>
+                            <Style x:Key="ReferenceIndexCellText" TargetType="TextBlock"
+                                   BasedOn="{StaticResource ReferenceCellText}">
+                                <Setter Property="TextAlignment" Value="Center" />
+                            </Style>
+                            <Style x:Key="ReferenceModelCellText" TargetType="TextBlock"
+                                   BasedOn="{StaticResource ReferenceCellText}">
+                                <Setter Property="ToolTip" Value="{Binding ModelEntry}" />
+                            </Style>
+                            <Style x:Key="ReferenceStoredCellText" TargetType="TextBlock"
+                                   BasedOn="{StaticResource ReferenceCellText}">
+                                <Setter Property="ToolTip" Value="{Binding StoredReference}" />
+                            </Style>
+                            <Style x:Key="ReferenceStatusCellText" TargetType="TextBlock"
+                                   BasedOn="{StaticResource ReferenceCellText}">
+                                <Setter Property="ToolTip" Value="{Binding StatusDescription}" />
+                            </Style>
+                            <Style x:Key="ReferenceResolvedCellText" TargetType="TextBlock"
+                                   BasedOn="{StaticResource ReferenceCellText}">
+                                <Setter Property="ToolTip" Value="{Binding ResolvedTexture}" />
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceMaterial}"
+                                                Binding="{Binding MaterialIndex}"
+                                                ElementStyle="{StaticResource ReferenceIndexCellText}"
+                                                Width="95" MinWidth="85" />
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceRole}"
+                                                Binding="{Binding Role}"
+                                                ElementStyle="{StaticResource ReferenceCellText}"
+                                                Width="120" MinWidth="100" />
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceModelEntry}"
+                                                Binding="{Binding ModelEntry}"
+                                                ElementStyle="{StaticResource ReferenceModelCellText}"
+                                                Width="0.9*" MinWidth="135" />
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceStoredReference}"
+                                                Binding="{Binding StoredReference}"
+                                                ElementStyle="{StaticResource ReferenceStoredCellText}"
+                                                Width="1*" MinWidth="140" />
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceStatus}"
+                                                Binding="{Binding Status}"
+                                                ElementStyle="{StaticResource ReferenceStatusCellText}"
+                                                Width="105" MinWidth="95" />
+                            <DataGridTextColumn Header="{DynamicResource PropertyReferenceResolvedTexture}"
+                                                Binding="{Binding ResolvedTexture}"
+                                                ElementStyle="{StaticResource ReferenceResolvedCellText}"
+                                                Width="1.25*" MinWidth="170" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock x:Name="ReferencesMessage" Text="{DynamicResource PropertyReferencesUnavailable}"
+                               Foreground="#6B7078" Margin="8" TextWrapping="Wrap"
+                               VerticalAlignment="Top" />
+                </Grid>
+            </TabItem>
+        </TabControl>
 
-        <Border Grid.Row="2" Background="#F8F9FA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,10">
+        <Border Grid.Row="2" Background="#F8F9FA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,10" Margin="0,2,0,0">
             <Button Content="Close" Width="88" Height="30" HorizontalAlignment="Right" Click="Close_Click" />
         </Border>
     </Grid>

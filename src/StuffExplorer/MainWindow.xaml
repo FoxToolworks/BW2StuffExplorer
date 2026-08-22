@@ -75,7 +75,8 @@
                 </MenuItem>
                 <MenuItem Header="{DynamicResource GroupBy}">
                     <MenuItem x:Name="GroupByNoneMenuItem" Header="{DynamicResource GroupNone}" IsCheckable="True" Click="GroupByNone_Click" />
-                    <MenuItem x:Name="GroupByTypeMenuItem" Header="{DynamicResource ColumnType}" IsCheckable="True" Click="GroupByType_Click" />
+                    <MenuItem x:Name="GroupByTypeMenuItem" Header="{DynamicResource GroupFileType}" IsCheckable="True" Click="GroupByType_Click" />
+                    <MenuItem x:Name="GroupByAssetCategoryMenuItem" Header="{DynamicResource GroupAssetCategory}" IsCheckable="True" Click="GroupByAssetCategory_Click" />
                 </MenuItem>
                 <Separator />
                 <MenuItem Header="{DynamicResource FocusSearch}" InputGestureText="Ctrl+F" Click="FocusSearch_Click" />
@@ -295,11 +296,19 @@
               SelectionChanged="FileGrid_SelectionChanged"
               MouseDoubleClick="FileGrid_MouseDoubleClick"
               Sorting="FileGrid_Sorting"
+              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+              ScrollViewer.VerticalScrollBarVisibility="Auto"
               GridLinesVisibility="None"
               BorderThickness="0"
               HeadersVisibility="Column"
               RowHeaderWidth="0"
               CanUserAddRows="False"
+              EnableRowVirtualization="True"
+              EnableColumnVirtualization="True"
+              ScrollViewer.CanContentScroll="True"
+              VirtualizingPanel.IsVirtualizing="True"
+              VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+              VirtualizingPanel.VirtualizationMode="Recycling"
               Background="White"
               BorderBrush="#FFF7F7F7">
 
@@ -421,8 +430,8 @@
                     <DataGrid.Columns>
                         <DataGridTemplateColumn x:Name="NameColumn"
                                     Header="{DynamicResource ColumnName}"
-                                    Width="360"
-                                    MinWidth="260"
+                                    Width="280"
+                                    MinWidth="220"
                                     SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -454,23 +463,23 @@
                                 Header="{DynamicResource ColumnModified}"
                                 Binding="{Binding ModifiedLocalTime, StringFormat={}{0:G}}"
                                 ElementStyle="{StaticResource CenteredCellText}"
-                                Width="155"
+                                Width="150"
                                 MinWidth="135"
                                 SortMemberPath="ModifiedTimestamp" />
 
                         <DataGridTextColumn x:Name="TypeColumn"
                                 Header="{DynamicResource ColumnType}"
-                                Binding="{Binding Extension}"
+                                Binding="{Binding TypeDisplay}"
                                 ElementStyle="{StaticResource CenteredCellText}"
-                                Width="90"
-                                MinWidth="75"
-                                SortMemberPath="Extension" />
+                                Width="200"
+                                MinWidth="170"
+                                SortMemberPath="TypeDisplay" />
 
                         <DataGridTextColumn x:Name="SizeColumn"
                                 Header="{DynamicResource ColumnSize}"
                                 Binding="{Binding Length, Converter={StaticResource FileSizeConverter}}"
                                 ElementStyle="{StaticResource CenteredCellText}"
-                                Width="105"
+                                Width="100"
                                 MinWidth="90"
                                 SortMemberPath="Length" />
 
@@ -478,7 +487,7 @@
                                 Header="{DynamicResource ColumnOffset}"
                                 Binding="{Binding Offset, StringFormat={}0x{0:X8}}"
                                 ElementStyle="{StaticResource CenteredCellText}"
-                                Width="120"
+                                Width="115"
                                 MinWidth="105"
                                 SortMemberPath="Offset" />
 
