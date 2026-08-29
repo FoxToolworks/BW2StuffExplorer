@@ -8,13 +8,14 @@ public enum Bw2ReferenceResolutionStatus
     Ambiguous
 }
 
-public sealed record Bw2TextureRelationship(
+public sealed record Bw2ImageRelationship(
     StuffEntry ModelEntry,
     uint MaterialIndex,
+    string MaterialName,
     Bw2TextureRole Role,
     string ReferencePath,
     Bw2ReferenceResolutionStatus ResolutionStatus,
-    StuffEntry? TextureEntry,
+    StuffEntry? ImageEntry,
     IReadOnlyList<StuffEntry> Candidates);
 
 public sealed class Bw2ArchiveAnalysis
@@ -22,7 +23,7 @@ public sealed class Bw2ArchiveAnalysis
     internal Bw2ArchiveAnalysis(
         IReadOnlyDictionary<StuffEntry, Bw2AssetClassification> classifications,
         IReadOnlyDictionary<StuffEntry, Bw2BwmModelInfo> bwmModels,
-        IReadOnlyList<Bw2TextureRelationship> relationships)
+        IReadOnlyList<Bw2ImageRelationship> relationships)
     {
         Classifications = classifications;
         BwmModels = bwmModels;
@@ -31,7 +32,7 @@ public sealed class Bw2ArchiveAnalysis
 
     public IReadOnlyDictionary<StuffEntry, Bw2AssetClassification> Classifications { get; }
     public IReadOnlyDictionary<StuffEntry, Bw2BwmModelInfo> BwmModels { get; }
-    public IReadOnlyList<Bw2TextureRelationship> Relationships { get; }
+    public IReadOnlyList<Bw2ImageRelationship> Relationships { get; }
 
     public Bw2AssetClassification GetClassification(StuffEntry entry)
     {
@@ -41,7 +42,7 @@ public sealed class Bw2ArchiveAnalysis
             : Bw2AssetClassifier.Classify(entry);
     }
 
-    public IReadOnlyList<Bw2TextureRelationship> GetRelationshipsFromModel(StuffEntry modelEntry)
+    public IReadOnlyList<Bw2ImageRelationship> GetRelationshipsFromModel(StuffEntry modelEntry)
     {
         ArgumentNullException.ThrowIfNull(modelEntry);
         return Relationships
@@ -49,13 +50,13 @@ public sealed class Bw2ArchiveAnalysis
             .ToArray();
     }
 
-    public IReadOnlyList<Bw2TextureRelationship> GetRelationshipsForTexture(StuffEntry textureEntry)
+    public IReadOnlyList<Bw2ImageRelationship> GetRelationshipsForImage(StuffEntry imageEntry)
     {
-        ArgumentNullException.ThrowIfNull(textureEntry);
+        ArgumentNullException.ThrowIfNull(imageEntry);
         return Relationships
-            .Where(relationship => relationship.TextureEntry == textureEntry
+            .Where(relationship => relationship.ImageEntry == imageEntry
                 || (relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.Ambiguous
-                    && relationship.Candidates.Contains(textureEntry)))
+                    && relationship.Candidates.Contains(imageEntry)))
             .ToArray();
     }
 }
@@ -70,14 +71,14 @@ public static class Bw2ArchiveAnalyzer
         foreach (var entry in archive.Entries)
             classifications[entry] = Bw2AssetClassifier.Classify(entry);
         var bwmModels = new Dictionary<StuffEntry, Bw2BwmModelInfo>();
-        var relationships = new List<Bw2TextureRelationship>();
-        var rolesByTexture = new Dictionary<StuffEntry, HashSet<Bw2TextureRole>>();
+        var relationships = new List<Bw2ImageRelationship>();
+        var rolesByImage = new Dictionary<StuffEntry, HashSet<Bw2TextureRole>>();
 
-        var ddsEntries = archive.Entries
-            .Where(entry => string.Equals(entry.Extension, "DDS", StringComparison.OrdinalIgnoreCase))
+        var imageEntries = archive.Entries
+            .Where(entry => classifications[entry].Category == Bw2AssetCategory.TexturesAndImages)
             .ToArray();
-        var pathIndex = BuildIndex(ddsEntries, entry => NormalizeReference(entry.Path));
-        var fileNameIndex = BuildIndex(ddsEntries, entry => entry.Name.ToLowerInvariant());
+        var pathIndex = BuildIndex(imageEntries, entry => NormalizeReference(entry.Path));
+        var fileNameIndex = BuildIndex(imageEntries, entry => entry.Name.ToLowerInvariant());
 
         foreach (var entry in archive.Entries.Where(
                      entry => string.Equals(entry.Extension, "BWM", StringComparison.OrdinalIgnoreCase)))
@@ -111,30 +112,31 @@ public static class Bw2ArchiveAnalyzer
                     fileNameIndex);
                 relationships.Add(relationship);
 
-                if (relationship.TextureEntry is not { } textureEntry)
+                if (relationship.ImageEntry is not { } imageEntry)
                     continue;
 
-                if (!rolesByTexture.TryGetValue(textureEntry, out var roles))
+                if (!rolesByImage.TryGetValue(imageEntry, out var roles))
                 {
                     roles = [];
-                    rolesByTexture.Add(textureEntry, roles);
+                    rolesByImage.Add(imageEntry, roles);
                 }
                 roles.Add(reference.Role);
             }
         }
 
-        foreach (var textureEntry in ddsEntries)
+        foreach (var imageEntry in imageEntries)
         {
-            var context = GetContext(textureEntry);
+            var original = classifications[imageEntry];
+            var context = GetContext(imageEntry);
             Bw2TextureRole[] roles;
 
-            if (rolesByTexture.TryGetValue(textureEntry, out var roleSet))
+            if (rolesByImage.TryGetValue(imageEntry, out var roleSet))
             {
                 roles = roleSet.OrderBy(role => role).ToArray();
                 if (context == Bw2AssetContext.None)
                     context = Bw2AssetContext.Model;
             }
-            else if (TryGetFamilyRole(textureEntry, context, out var familyRole))
+            else if (TryGetFamilyRole(imageEntry, context, out var familyRole))
             {
                 roles = [familyRole];
             }
@@ -143,10 +145,10 @@ public static class Bw2ArchiveAnalyzer
                 roles = [];
             }
 
-            classifications[textureEntry] = new Bw2AssetClassification(
-                "DDS",
-                Bw2AssetCategory.TexturesAndImages,
-                Bw2FileType.Texture,
+            classifications[imageEntry] = new Bw2AssetClassification(
+                original.Format,
+                original.Category,
+                original.FileType,
                 context,
                 roles);
         }
@@ -173,7 +175,7 @@ public static class Bw2ArchiveAnalyzer
         return index;
     }
 
-    private static Bw2TextureRelationship ResolveRelationship(
+    private static Bw2ImageRelationship ResolveRelationship(
         StuffEntry modelEntry,
         Bw2BwmTextureReference reference,
         IReadOnlyDictionary<string, List<StuffEntry>> pathIndex,
@@ -209,36 +211,39 @@ public static class Bw2ArchiveAnalyzer
         return Missing(modelEntry, reference);
     }
 
-    private static Bw2TextureRelationship Resolved(
+    private static Bw2ImageRelationship Resolved(
         StuffEntry modelEntry,
         Bw2BwmTextureReference reference,
         Bw2ReferenceResolutionStatus status,
-        StuffEntry textureEntry) => new(
+        StuffEntry imageEntry) => new(
             modelEntry,
             reference.MaterialIndex,
+            reference.MaterialName,
             reference.Role,
             reference.Path,
             status,
-            textureEntry,
-            new[] { textureEntry });
+            imageEntry,
+            new[] { imageEntry });
 
-    private static Bw2TextureRelationship Missing(
+    private static Bw2ImageRelationship Missing(
         StuffEntry modelEntry,
         Bw2BwmTextureReference reference) => new(
             modelEntry,
             reference.MaterialIndex,
+            reference.MaterialName,
             reference.Role,
             reference.Path,
             Bw2ReferenceResolutionStatus.Missing,
             null,
             Array.Empty<StuffEntry>());
 
-    private static Bw2TextureRelationship Ambiguous(
+    private static Bw2ImageRelationship Ambiguous(
         StuffEntry modelEntry,
         Bw2BwmTextureReference reference,
         IReadOnlyList<StuffEntry> candidates) => new(
             modelEntry,
             reference.MaterialIndex,
+            reference.MaterialName,
             reference.Role,
             reference.Path,
             Bw2ReferenceResolutionStatus.Ambiguous,
@@ -268,6 +273,12 @@ public static class Bw2ArchiveAnalyzer
         Bw2AssetContext context,
         out Bw2TextureRole role)
     {
+        if (!entry.Extension.Equals("DDS", StringComparison.OrdinalIgnoreCase))
+        {
+            role = default;
+            return false;
+        }
+
         var name = entry.Name;
         if (context == Bw2AssetContext.Landscape)
         {

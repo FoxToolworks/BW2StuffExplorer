@@ -5,31 +5,107 @@ namespace StuffCore;
 
 public sealed record Bw2BwmTextureReference(
     uint MaterialIndex,
+    string MaterialName,
     Bw2TextureRole Role,
     string Path);
 
-public sealed record Bw2BwmModelInfo(
-    uint Version,
-    uint ModelType,
-    uint MaterialCount,
-    IReadOnlyList<Bw2BwmTextureReference> TextureReferences);
+public sealed record Bw2BwmMaterial
+{
+    public Bw2BwmMaterial(
+        uint index,
+        string storedName,
+        string diffuseMap,
+        string lightMap,
+        string growthMap,
+        string specularMap,
+        string additionalMap,
+        string normalMap)
+    {
+        ArgumentNullException.ThrowIfNull(storedName);
+        ArgumentNullException.ThrowIfNull(diffuseMap);
+        ArgumentNullException.ThrowIfNull(lightMap);
+        ArgumentNullException.ThrowIfNull(growthMap);
+        ArgumentNullException.ThrowIfNull(specularMap);
+        ArgumentNullException.ThrowIfNull(additionalMap);
+        ArgumentNullException.ThrowIfNull(normalMap);
+
+        Index = index;
+        StoredName = storedName;
+        DiffuseMap = diffuseMap;
+        LightMap = lightMap;
+        GrowthMap = growthMap;
+        SpecularMap = specularMap;
+        AdditionalMap = additionalMap;
+        NormalMap = normalMap;
+        TextureReferences = CreateTextureReferences();
+    }
+
+    public uint Index { get; }
+    public string StoredName { get; }
+    public string DiffuseMap { get; }
+    public string LightMap { get; }
+    public string GrowthMap { get; }
+    public string SpecularMap { get; }
+    public string AdditionalMap { get; }
+    public string NormalMap { get; }
+    public IReadOnlyList<Bw2BwmTextureReference> TextureReferences { get; }
+
+    private IReadOnlyList<Bw2BwmTextureReference> CreateTextureReferences()
+    {
+        var references = new List<Bw2BwmTextureReference>(6);
+        AddReference(references, Bw2TextureRole.DiffuseMap, DiffuseMap);
+        AddReference(references, Bw2TextureRole.LightMap, LightMap);
+        AddReference(references, Bw2TextureRole.GrowthMap, GrowthMap);
+        AddReference(references, Bw2TextureRole.SpecularMap, SpecularMap);
+        AddReference(references, Bw2TextureRole.AdditionalMap, AdditionalMap);
+        AddReference(references, Bw2TextureRole.NormalMap, NormalMap);
+        return references.ToArray();
+    }
+
+    private void AddReference(
+        ICollection<Bw2BwmTextureReference> references,
+        Bw2TextureRole role,
+        string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            references.Add(new Bw2BwmTextureReference(Index, StoredName, role, path));
+    }
+}
+
+public sealed record Bw2BwmModelInfo
+{
+    public Bw2BwmModelInfo(
+        uint version,
+        uint modelType,
+        IReadOnlyList<Bw2BwmMaterial> materials)
+    {
+        ArgumentNullException.ThrowIfNull(materials);
+        var materialArray = materials.ToArray();
+
+        Version = version;
+        ModelType = modelType;
+        Materials = materialArray;
+        MaterialCount = checked((uint)materialArray.Length);
+        TextureReferences = materialArray
+            .SelectMany(material => material.TextureReferences)
+            .ToArray();
+    }
+
+    public uint Version { get; }
+    public uint ModelType { get; }
+    public uint MaterialCount { get; }
+    public IReadOnlyList<Bw2BwmMaterial> Materials { get; }
+    public IReadOnlyList<Bw2BwmTextureReference> TextureReferences { get; }
+}
 
 public static class Bw2BwmReader
 {
     public const int HeaderSize = 184;
     public const int MaterialSize = 448;
+    public const int MaterialNameOffset = 384;
+    public const int FixedStringSize = 64;
     public const uint Magic = 0x2B00B1E5;
     public const string Signature = "LiOnHeAdMODEL";
-
-    private static readonly (int Offset, Bw2TextureRole Role)[] TextureSlots =
-    [
-        (0, Bw2TextureRole.DiffuseMap),
-        (64, Bw2TextureRole.LightMap),
-        (128, Bw2TextureRole.GrowthMap),
-        (192, Bw2TextureRole.SpecularMap),
-        (256, Bw2TextureRole.AnimatedMap),
-        (320, Bw2TextureRole.NormalMap)
-    ];
 
     public static bool TryRead(StuffArchive archive, StuffEntry entry, out Bw2BwmModelInfo? model)
         => TryRead(archive, entry, out model, out _);
@@ -124,25 +200,28 @@ public static class Bw2BwmReader
                 return false;
             }
 
-            var references = new List<Bw2BwmTextureReference>();
-            var material = new byte[MaterialSize];
+            var materials = new List<Bw2BwmMaterial>();
+            var materialBytes = new byte[MaterialSize];
             for (uint materialIndex = 0; materialIndex < materialCount; materialIndex++)
             {
-                if (!TryReadExactly(stream, material))
+                if (!TryReadExactly(stream, materialBytes))
                 {
                     error = $"Material {materialIndex} is truncated.";
                     return false;
                 }
 
-                foreach (var slot in TextureSlots)
-                {
-                    var path = ReadFixedAscii(material, slot.Offset, 64).Trim();
-                    if (!string.IsNullOrWhiteSpace(path))
-                        references.Add(new Bw2BwmTextureReference(materialIndex, slot.Role, path));
-                }
+                materials.Add(new Bw2BwmMaterial(
+                    materialIndex,
+                    ReadFixedAscii(materialBytes, MaterialNameOffset, FixedStringSize),
+                    ReadTexturePath(materialBytes, 0),
+                    ReadTexturePath(materialBytes, 64),
+                    ReadTexturePath(materialBytes, 128),
+                    ReadTexturePath(materialBytes, 192),
+                    ReadTexturePath(materialBytes, 256),
+                    ReadTexturePath(materialBytes, 320)));
             }
 
-            model = new Bw2BwmModelInfo(version, modelType, materialCount, references);
+            model = new Bw2BwmModelInfo(version, modelType, materials);
             error = string.Empty;
             return true;
         }
@@ -176,4 +255,7 @@ public static class Bw2BwmReader
 
         return end == offset ? string.Empty : Encoding.ASCII.GetString(bytes, offset, end - offset);
     }
+
+    private static string ReadTexturePath(byte[] material, int offset) =>
+        ReadFixedAscii(material, offset, FixedStringSize).Trim();
 }

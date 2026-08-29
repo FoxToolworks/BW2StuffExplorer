@@ -10,8 +10,12 @@ try
     TestValidArchive(tempRoot);
     TestBw2AssetClassification();
     TestBw2ArchiveAnalysis(tempRoot);
+    TestFormatNeutralImageRelationships(tempRoot);
     TestBw2DdsReader();
     TestBw2DdsAlphaAnalyzer();
+    TestBw2TgaReader();
+    TestBw2BmpReader();
+    TestBw2Rgb555Reader();
     TestAssetInspectionProviders(tempRoot);
     TestMalformedArchives(tempRoot);
     TestUnsafeAndDuplicatePaths(tempRoot);
@@ -19,11 +23,124 @@ try
     TestTruncatedSourceCleanup(tempRoot);
 
     Console.WriteLine("StuffCore self-test passed.");
+    var retailCorpusPath = args.Length switch
+    {
+        0 => Environment.GetEnvironmentVariable("BW2_STUFF_CORPUS"),
+        1 => args[0],
+        _ => throw new InvalidOperationException(
+            "Pass at most one retail corpus path: StuffCore.SelfTest <everything.stuff>.")
+    };
+    if (!string.IsNullOrWhiteSpace(retailCorpusPath))
+        TestRetailCorpus(retailCorpusPath);
+
     return 0;
 }
 finally
 {
     Directory.Delete(tempRoot, recursive: true);
+}
+
+static void TestRetailCorpus(string archivePath)
+{
+    archivePath = Path.GetFullPath(archivePath);
+    Assert(File.Exists(archivePath), $"retail corpus archive exists: {archivePath}");
+
+    var archive = StuffArchive.Open(archivePath);
+    var analysis = Bw2ArchiveAnalyzer.Analyze(archive);
+    StuffEntry[] Entries(string extension) => archive.Entries
+        .Where(entry => entry.Extension.Equals(extension, StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
+    var bwmEntries = Entries("BWM");
+    var tgaEntries = Entries("TGA");
+    var bmpEntries = Entries("BMP");
+    var rgb555Entries = Entries("555");
+
+    Assert(archive.Entries.Count == 3_928, "retail corpus entry count");
+    Assert(bwmEntries.Length == 822, "retail BWM entry count");
+    Assert(analysis.BwmModels.Count == 820, "retail parsed BWM count");
+    Assert(
+        bwmEntries.Count(entry => analysis.GetClassification(entry).FileType == Bw2FileType.UnknownModelData) == 2,
+        "retail empty placeholder BWM count");
+    Assert(
+        analysis.BwmModels.Values.Count(model => model.Version == 5) == 13
+            && analysis.BwmModels.Values.Count(model => model.Version == 6) == 807,
+        "retail BWM version distribution");
+    Assert(
+        analysis.BwmModels.Values.Sum(model => model.Materials.Count) == 1_753,
+        "retail BWM material count");
+    Assert(
+        analysis.BwmModels.Values
+            .SelectMany(model => model.Materials)
+            .Count(material => material.TextureReferences.Count == 0) == 141,
+        "retail textureless material count");
+
+    Assert(analysis.Relationships.Count == 3_396, "retail image relationship count");
+    Assert(
+        analysis.Relationships.All(relationship =>
+            string.Equals(
+                Path.GetExtension(relationship.ReferencePath),
+                ".dds",
+                StringComparison.OrdinalIgnoreCase)),
+        "retail BWM references remain DDS-only");
+    Assert(
+        analysis.Relationships.Count(relationship =>
+            relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.ResolvedExactPath) == 0,
+        "retail exact-path relationship count");
+    Assert(
+        analysis.Relationships.Count(relationship =>
+            relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.ResolvedUniqueFileName) == 3_266,
+        "retail unique-filename relationship count");
+    Assert(
+        analysis.Relationships.Count(relationship =>
+            relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.Missing) == 126,
+        "retail missing relationship count");
+    Assert(
+        analysis.Relationships.Count(relationship =>
+            relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.Ambiguous) == 4,
+        "retail ambiguous relationship count");
+    Assert(
+        analysis.Relationships
+            .Where(relationship => relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.Ambiguous)
+            .All(relationship => relationship.Candidates.Count == 2),
+        "retail ambiguous candidate preservation");
+
+    Assert(tgaEntries.Length == 106, "retail TGA count");
+    foreach (var entry in tgaEntries)
+    {
+        using var stream = archive.OpenEntry(entry);
+        Assert(
+            Bw2TgaReader.TryRead(stream, out _, out var error),
+            $"retail TGA validation: {entry.Path}: {error}");
+    }
+
+    Assert(bmpEntries.Length == 19, "retail BMP count");
+    foreach (var entry in bmpEntries)
+    {
+        using var stream = archive.OpenEntry(entry);
+        Assert(
+            Bw2BmpReader.TryRead(stream, out _, out var error),
+            $"retail BMP validation: {entry.Path}: {error}");
+    }
+
+    Assert(rgb555Entries.Length == 9, "retail .555 count");
+    foreach (var entry in rgb555Entries)
+    {
+        using var stream = archive.OpenEntry(entry);
+        Assert(
+            Bw2Rgb555Reader.TryRead(stream, out _, out var error),
+            $"retail .555 validation: {entry.Path}: {error}");
+    }
+
+    Assert(
+        tgaEntries.Concat(bmpEntries).Concat(rgb555Entries)
+            .All(entry => analysis.GetRelationshipsForImage(entry).Count == 0),
+        "retail non-DDS images have no currently parsed incoming references");
+
+    Console.WriteLine(
+        "Retail corpus validation passed: "
+        + "822 BWM (820 parsed), 1,753 materials, 3,396 references, "
+        + "106 TGA, 19 BMP, 9 .555.");
 }
 
 static void TestBw2AssetClassification()
@@ -79,7 +196,7 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
             (Bw2TextureRole.LightMap, "data/textures/light.dds"),
             (Bw2TextureRole.GrowthMap, "missing.dds"),
             (Bw2TextureRole.SpecularMap, "shared.dds"),
-            (Bw2TextureRole.AnimatedMap, "special_d.dds"),
+            (Bw2TextureRole.AdditionalMap, "special_d.dds"),
             (Bw2TextureRole.NormalMap, "norm.dds")
         ]);
     var skinnedModel = CreateBwm(
@@ -94,7 +211,8 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
         version: 6,
         modelType: 2,
         materialCount: 2,
-        references: [(1u, Bw2TextureRole.DiffuseMap, "unique.dds")]);
+        references: [(1u, Bw2TextureRole.DiffuseMap, "unique.dds")],
+        materialNames: ["lh_phys", "_glossy_"]);
 
     CreateArchiveWithContents(
         archivePath,
@@ -133,12 +251,48 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
     Assert(Classification("data/models/static.bwm").FileType == Bw2FileType.StaticModel, "static BWM detection");
     Assert(Classification("data/models/skinned.bwm").FileType == Bw2FileType.SkinnedModel, "skinned BWM detection");
     Assert(Classification("data/models/invalid.bwm").FileType == Bw2FileType.UnknownModelData, "invalid BWM fallback");
-    Assert(analysis.BwmModels[Entry("data/models/skinned.bwm")].Version == 5, "BWM version 5 support");
+    var skinnedBwm = analysis.BwmModels[Entry("data/models/skinned.bwm")];
+    Assert(skinnedBwm.Version == 5, "BWM version 5 support");
+    Assert(skinnedBwm.Materials[0].StoredName == "1 - default", "BWM version 5 material-name support");
+    var staticBwm = analysis.BwmModels[Entry("data/models/static.bwm")];
+    Assert(staticBwm.Materials.Count == 1 && staticBwm.MaterialCount == 1, "BWM material collection preservation");
+    Assert(staticBwm.Materials[0].StoredName == "1 - default", "BWM stored material-name preservation");
     Assert(
-        analysis.BwmModels[Entry("data/models/static.bwm")].TextureReferences.All(reference => reference.MaterialIndex == 0),
+        staticBwm.Materials[0].TextureReferences.Select(reference => reference.Role).SequenceEqual(
+        [
+            Bw2TextureRole.DiffuseMap,
+            Bw2TextureRole.LightMap,
+            Bw2TextureRole.GrowthMap,
+            Bw2TextureRole.SpecularMap,
+            Bw2TextureRole.AdditionalMap,
+            Bw2TextureRole.NormalMap
+        ]),
+        "BWM material slot-order preservation");
+    Assert(
+        staticBwm.Materials[0].DiffuseMap == "shared.dds"
+            && staticBwm.Materials[0].LightMap == "data/textures/light.dds"
+            && staticBwm.Materials[0].GrowthMap == "missing.dds"
+            && staticBwm.Materials[0].SpecularMap == "shared.dds"
+            && staticBwm.Materials[0].AdditionalMap == "special_d.dds"
+            && staticBwm.Materials[0].NormalMap == "norm.dds",
+        "all six BWM material strings");
+    Assert(
+        staticBwm.TextureReferences.All(reference => reference.MaterialIndex == 0),
         "BWM material-index preservation");
     Assert(
-        analysis.BwmModels[Entry("data/models/multi-material.bwm")].TextureReferences.Single().MaterialIndex == 1,
+        staticBwm.TextureReferences.All(reference => reference.MaterialName == "1 - default"),
+        "BWM material-name propagation to texture references");
+    var multiMaterialBwm = analysis.BwmModels[Entry("data/models/multi-material.bwm")];
+    Assert(
+        multiMaterialBwm.Materials[0].StoredName == "lh_phys"
+            && multiMaterialBwm.Materials[0].TextureReferences.Count == 0,
+        "BWM textureless material preservation");
+    Assert(
+        multiMaterialBwm.Materials[1].StoredName == "_glossy_"
+            && multiMaterialBwm.Materials[1].DiffuseMap == "unique.dds",
+        "BWM named referenced material preservation");
+    Assert(
+        multiMaterialBwm.TextureReferences.Single().MaterialIndex == 1,
         "non-zero BWM material-index preservation");
     Assert(
         !Bw2BwmReader.TryRead(archive, Entry("data/models/invalid.bwm"), out _, out var invalidBwmError)
@@ -157,7 +311,7 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
         "multi-role DDS role preservation");
     Assert(shared.Context == Bw2AssetContext.Model, "BWM-referenced DDS model context");
     Assert(Classification("data/textures/light.dds").TextureRoles.SequenceEqual([Bw2TextureRole.LightMap]), "light-map DDS role");
-    Assert(Classification("data/ctr/test/special_d.dds").TextureRoles.SequenceEqual([Bw2TextureRole.AnimatedMap]), "BWM role has priority over family suffix");
+    Assert(Classification("data/ctr/test/special_d.dds").TextureRoles.SequenceEqual([Bw2TextureRole.AdditionalMap]), "BWM role has priority over family suffix");
     Assert(Classification("data/ctr/test/special_d.dds").Context == Bw2AssetContext.Creature, "BWM-referenced creature DDS context");
     Assert(Classification("data/textures/norm.dds").TextureRoles.SequenceEqual([Bw2TextureRole.NormalMap]), "normal-map DDS role");
     Assert(Classification("data/textures/unique.dds").TextureRoles.SequenceEqual([Bw2TextureRole.DiffuseMap]), "unique filename DDS resolution");
@@ -188,18 +342,19 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
         analysis.GetRelationshipsFromModel(Entry("data/models/static.bwm")).Count == 6,
         "forward BWM relationship query");
     Assert(
-        analysis.GetRelationshipsForTexture(Entry("data/textures/shared.dds")).Count == 2,
+        analysis.GetRelationshipsForImage(Entry("data/textures/shared.dds")).Count == 2,
         "reverse DDS relationship query with multiple roles");
     Assert(
-        analysis.GetRelationshipsForTexture(Entry("data/textures/a/mesh.dds")).Single().ResolutionStatus ==
+        analysis.GetRelationshipsForImage(Entry("data/textures/a/mesh.dds")).Single().ResolutionStatus ==
         Bw2ReferenceResolutionStatus.Ambiguous,
         "reverse DDS query includes ambiguous candidates");
     Assert(
-        analysis.GetRelationshipsForTexture(Entry("data/textures/generic.dds")).Count == 0,
+        analysis.GetRelationshipsForImage(Entry("data/textures/generic.dds")).Count == 0,
         "reverse DDS query leaves unrelated textures empty");
     Assert(
-        analysis.GetRelationshipsFromModel(Entry("data/models/multi-material.bwm")).Single().MaterialIndex == 1,
-        "forward relationship query retains material index");
+        analysis.GetRelationshipsFromModel(Entry("data/models/multi-material.bwm")).Single() is
+        { MaterialIndex: 1, MaterialName: "_glossy_" },
+        "forward relationship query retains material identity");
 
     var inspectionService = new Bw2AssetInspectionService();
     var modelInspection = inspectionService.Inspect(Bw2AssetInspectionContext.FromArchive(
@@ -207,16 +362,127 @@ static void TestBw2ArchiveAnalysis(string tempRoot)
         Entry("data/models/static.bwm"),
         analysis));
     Assert(modelInspection.ProviderId == "bwm", "BWM metadata provider selection");
-    Assert(modelInspection.ReferenceView == Bw2AssetReferenceView.ModelToTexture, "BWM forward reference view");
+    Assert(modelInspection.ReferenceView == Bw2AssetReferenceView.ModelToImage, "BWM forward reference view");
     Assert(modelInspection.References.Count == 6, "BWM inspection relationship preservation");
+    Assert(modelInspection.HasContents && modelInspection.Contents.Count == 1, "BWM material contents exposure");
+    var materialContent = modelInspection.Contents.OfType<Bw2BwmMaterialContent>().Single();
+    Assert(
+        materialContent.StoredName == "1 - default"
+            && materialContent.DiffuseMap == "shared.dds"
+            && materialContent.LightMap == "data/textures/light.dds"
+            && materialContent.GrowthMap == "missing.dds"
+            && materialContent.SpecularMap == "shared.dds"
+            && materialContent.AdditionalMap == "special_d.dds"
+            && materialContent.NormalMap == "norm.dds",
+        "BWM material contents field preservation");
+
+    var multiMaterialInspection = inspectionService.Inspect(Bw2AssetInspectionContext.FromArchive(
+        archive,
+        Entry("data/models/multi-material.bwm"),
+        analysis));
+    var multiMaterialContents = multiMaterialInspection.Contents
+        .OfType<Bw2BwmMaterialContent>()
+        .ToArray();
+    Assert(multiMaterialContents.Length == 2, "one BWM content row per material");
+    Assert(
+        multiMaterialContents[0].StoredName == "lh_phys"
+            && string.IsNullOrEmpty(multiMaterialContents[0].DiffuseMap)
+            && multiMaterialInspection.References.Count == 1,
+        "textureless BWM content remains separate from references");
 
     var textureInspection = inspectionService.Inspect(Bw2AssetInspectionContext.FromArchive(
         archive,
         Entry("data/textures/shared.dds"),
         analysis));
     Assert(textureInspection.ProviderId == "dds", "DDS metadata provider selection in archive context");
-    Assert(textureInspection.ReferenceView == Bw2AssetReferenceView.TextureToModel, "DDS reverse reference view");
+    Assert(textureInspection.ReferenceView == Bw2AssetReferenceView.ImageToModel, "DDS reverse reference view");
     Assert(textureInspection.References.Count == 2, "DDS inspection relationship preservation");
+    Assert(
+        textureInspection.References.All(reference => reference.MaterialName == "1 - default"),
+        "DDS reverse references retain material names");
+    Assert(!textureInspection.HasContents, "DDS contents remain unavailable");
+}
+
+static void TestFormatNeutralImageRelationships(string tempRoot)
+{
+    var archivePath = Path.Combine(tempRoot, "image-relationships.stuff");
+    var model = CreateBwm(
+        version: 6,
+        modelType: 2,
+        references:
+        [
+            (Bw2TextureRole.DiffuseMap, "data/images/sample.dds"),
+            (Bw2TextureRole.LightMap, "data/images/sample.tga"),
+            (Bw2TextureRole.GrowthMap, "data/images/sample.bmp"),
+            (Bw2TextureRole.AdditionalMap, "data/images/sample.555")
+        ]);
+
+    CreateArchiveWithContents(
+        archivePath,
+        [
+            ("data/models/image-targets.bwm", model),
+            ("data/images/sample.dds", Combine(
+                CreateLegacyDds("DXT1", 4, 4, 1, 8),
+                CreateBc1Block(color0: 0xFFFF, color1: 0x0000, selectors: 0))),
+            ("data/images/sample.tga", CreateTga(
+                Bw2TgaImageType.UncompressedTrueColor,
+                width: 2,
+                height: 2,
+                pixelDepth: 24)),
+            ("data/images/sample.bmp", CreateBmp(
+                width: 2,
+                height: 2,
+                pixelDepth: 24,
+                storeCalculatedImageSize: true)),
+            ("data/images/sample.555", CreateRgb555(0x019D00B0))
+        ]);
+
+    var archive = StuffArchive.Open(archivePath);
+    var analysis = Bw2ArchiveAnalyzer.Analyze(archive);
+    var relationships = analysis.Relationships;
+
+    Assert(relationships.Count == 4, "four-format synthetic image relationship count");
+    Assert(
+        relationships.All(relationship =>
+            relationship.ResolutionStatus == Bw2ReferenceResolutionStatus.ResolvedExactPath
+            && relationship.ImageEntry is not null
+            && relationship.Candidates.Count == 1
+            && relationship.Candidates[0] == relationship.ImageEntry),
+        "four-format exact image candidate preservation");
+    Assert(
+        relationships
+            .Select(relationship => relationship.ImageEntry!.Extension.ToUpperInvariant())
+            .OrderBy(extension => extension)
+            .SequenceEqual(new[] { "555", "BMP", "DDS", "TGA" }),
+        "DDS TGA BMP and .555 relationship targets");
+    Assert(
+        relationships.All(relationship =>
+            analysis.GetClassification(relationship.ImageEntry!) is
+            { Category: Bw2AssetCategory.TexturesAndImages, Context: Bw2AssetContext.Model }),
+        "generic image target category and relationship context");
+    Assert(
+        analysis.GetClassification(relationships.Single(item => item.ImageEntry!.Extension == "TGA").ImageEntry!).FileType
+            == Bw2FileType.TargaImage
+            && analysis.GetClassification(relationships.Single(item => item.ImageEntry!.Extension == "BMP").ImageEntry!).FileType
+            == Bw2FileType.BitmapImage
+            && analysis.GetClassification(relationships.Single(item => item.ImageEntry!.Extension == "555").ImageEntry!).FileType
+            == Bw2FileType.Rgb555SkyTexture,
+        "generic image resolution preserves friendly file types");
+
+    var service = new Bw2AssetInspectionService();
+    foreach (var relationship in relationships)
+    {
+        var imageEntry = relationship.ImageEntry!;
+        var inspection = service.Inspect(Bw2AssetInspectionContext.FromArchive(
+            archive,
+            imageEntry,
+            analysis));
+        Assert(
+            inspection.ReferenceView == Bw2AssetReferenceView.ImageToModel
+                && inspection.References.Count == 1
+                && inspection.References[0].CandidateAssetPaths.SequenceEqual([imageEntry.Path]),
+            $"{imageEntry.Extension} reverse image relationship context");
+    }
 }
 
 static void TestBw2DdsReader()
@@ -392,6 +658,314 @@ static Bw2DdsNonOpaqueAlphaStatus AnalyzeDdsAlpha(byte[] bytes)
     return Bw2DdsAlphaAnalyzer.Analyze(stream, info!);
 }
 
+static void TestBw2TgaReader()
+{
+    using (var stream = new MemoryStream(CreateTga(
+               Bw2TgaImageType.UncompressedTrueColor,
+               width: 4,
+               height: 2,
+               pixelDepth: 24)))
+    {
+        Assert(Bw2TgaReader.TryRead(stream, out var info, out var error), $"footerless TGA parsing: {error}");
+        Assert(info is not null, "footerless TGA metadata exists");
+        Assert(info!.Width == 4 && info.Height == 2, "footerless TGA dimensions");
+        Assert(info.ImageType == Bw2TgaImageType.UncompressedTrueColor, "uncompressed true-color TGA type");
+        Assert(info.PixelDepth == 24 && info.AttributeBits == 0, "24-bit TGA pixel declaration");
+        Assert(
+            info.VerticalOrigin == Bw2TgaVerticalOrigin.Bottom
+                && info.HorizontalOrder == Bw2TgaHorizontalOrder.LeftToRight,
+            "default TGA origin and order");
+        Assert(!info.HasTga20Footer && !info.HasExtensionArea, "footerless TGA structure");
+        Assert(
+            info.PixelDataOffset == Bw2TgaReader.HeaderSize
+                && info.PixelDataEndOffset == stream.Length,
+            "footerless TGA payload bounds");
+    }
+
+    using (var stream = new MemoryStream(CreateTga(
+               Bw2TgaImageType.UncompressedGrayscale,
+               width: 3,
+               height: 2,
+               pixelDepth: 8,
+               attributeBits: 8,
+               descriptorFlags: 0x30,
+               withFooter: true)))
+    {
+        Assert(Bw2TgaReader.TryRead(stream, out var info, out var error), $"grayscale TGA parsing: {error}");
+        Assert(info!.ImageType == Bw2TgaImageType.UncompressedGrayscale, "grayscale TGA type");
+        Assert(info.PixelDepth == 8 && info.AttributeBits == 8, "grayscale TGA depth and attributes");
+        Assert(
+            info.VerticalOrigin == Bw2TgaVerticalOrigin.Top
+                && info.HorizontalOrder == Bw2TgaHorizontalOrder.RightToLeft,
+            "top-right TGA origin and order");
+        Assert(info.HasTga20Footer && !info.HasExtensionArea, "TGA 2.0 footer without extension area");
+    }
+
+    using (var stream = new MemoryStream(CreateTga(
+               Bw2TgaImageType.RunLengthEncodedTrueColor,
+               width: 3,
+               height: 2,
+               pixelDepth: 32,
+               attributeBits: 8,
+               withFooter: true,
+               withExtensionArea: true,
+               declaredExtensionAreaSize: 494,
+               imageIdLength: 4)))
+    {
+        Assert(Bw2TgaReader.TryRead(stream, out var info, out var error), $"RLE TGA parsing: {error}");
+        Assert(info!.IsRunLengthEncoded, "RLE TGA encoding flag");
+        Assert(info.ImageIdLength == 4 && info.PixelDataOffset == 22, "TGA image ID offset handling");
+        Assert(
+            info.HasExtensionArea
+                && info.ExtensionAreaSize == 494
+                && info.ExtensionAreaStoredSize == 495
+                && info.UsesBw2ExtensionSizeCompatibility,
+            "BW2 TGA extension-area compatibility validation");
+        Assert(info.PixelDataEndOffset < stream.Length - Bw2TgaReader.FooterSize, "RLE payload ends before extension area");
+    }
+
+    using (var stream = new MemoryStream(new byte[Bw2TgaReader.HeaderSize - 1]))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "truncated TGA header rejection");
+
+    var unsupportedType = CreateTga(Bw2TgaImageType.UncompressedTrueColor, 2, 2, 24);
+    unsupportedType[2] = 1;
+    using (var stream = new MemoryStream(unsupportedType))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "unsupported TGA image type rejection");
+
+    var invalidAttributeBits = CreateTga(
+        Bw2TgaImageType.UncompressedTrueColor,
+        width: 2,
+        height: 2,
+        pixelDepth: 32,
+        attributeBits: 9);
+    using (var stream = new MemoryStream(invalidAttributeBits))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "invalid TGA attribute-bit count rejection");
+
+    var truncatedPayload = CreateTga(Bw2TgaImageType.UncompressedTrueColor, 2, 2, 24);
+    Array.Resize(ref truncatedPayload, truncatedPayload.Length - 1);
+    using (var stream = new MemoryStream(truncatedPayload))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "truncated TGA pixel payload rejection");
+
+    var crossingPacket = CreateTga(
+        Bw2TgaImageType.RunLengthEncodedTrueColor,
+        width: 3,
+        height: 2,
+        pixelDepth: 32,
+        pixelPayload: [0x83, 0, 0, 0, 0, 0x81, 0, 0, 0, 0]);
+    using (var stream = new MemoryStream(crossingPacket))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "scanline-crossing TGA RLE packet rejection");
+
+    var invalidExtensionOffset = CreateTga(
+        Bw2TgaImageType.UncompressedTrueColor,
+        width: 2,
+        height: 2,
+        pixelDepth: 32,
+        withFooter: true);
+    BinaryPrimitives.WriteUInt32LittleEndian(
+        invalidExtensionOffset.AsSpan(invalidExtensionOffset.Length - Bw2TgaReader.FooterSize, 4),
+        1);
+    using (var stream = new MemoryStream(invalidExtensionOffset))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "invalid TGA extension offset rejection");
+
+    var standardExtensionSize = CreateTga(
+        Bw2TgaImageType.UncompressedTrueColor,
+        width: 2,
+        height: 2,
+        pixelDepth: 32,
+        withFooter: true,
+        withExtensionArea: true);
+    using (var stream = new MemoryStream(standardExtensionSize))
+    {
+        Assert(Bw2TgaReader.TryRead(stream, out var info, out var error), $"standard TGA 2.0 extension size: {error}");
+        Assert(
+            info!.ExtensionAreaSize == 495
+                && info.ExtensionAreaStoredSize == 495
+                && !info.UsesBw2ExtensionSizeCompatibility,
+            "standard TGA 2.0 extension metadata");
+    }
+
+    var invalidExtensionSize = CreateTga(
+        Bw2TgaImageType.UncompressedTrueColor,
+        width: 2,
+        height: 2,
+        pixelDepth: 32,
+        withFooter: true,
+        withExtensionArea: true);
+    var footerOffset = invalidExtensionSize.Length - Bw2TgaReader.FooterSize;
+    var extensionOffset = BinaryPrimitives.ReadUInt32LittleEndian(
+        invalidExtensionSize.AsSpan(footerOffset, 4));
+    BinaryPrimitives.WriteUInt16LittleEndian(invalidExtensionSize.AsSpan((int)extensionOffset, 2), 493);
+    using (var stream = new MemoryStream(invalidExtensionSize))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "invalid TGA 2.0 extension size rejection");
+
+    var truncatedBw2Extension = CreateTga(
+        Bw2TgaImageType.UncompressedTrueColor,
+        width: 2,
+        height: 2,
+        pixelDepth: 32,
+        withFooter: true,
+        withExtensionArea: true,
+        declaredExtensionAreaSize: 494);
+    footerOffset = truncatedBw2Extension.Length - Bw2TgaReader.FooterSize;
+    var physicallyTruncatedBw2Extension = new byte[truncatedBw2Extension.Length - 1];
+    Array.Copy(
+        truncatedBw2Extension,
+        0,
+        physicallyTruncatedBw2Extension,
+        0,
+        footerOffset - 1);
+    Array.Copy(
+        truncatedBw2Extension,
+        footerOffset,
+        physicallyTruncatedBw2Extension,
+        footerOffset - 1,
+        Bw2TgaReader.FooterSize);
+    using (var stream = new MemoryStream(physicallyTruncatedBw2Extension))
+        Assert(!Bw2TgaReader.TryRead(stream, out _, out _), "truncated BW2-compatible TGA extension rejection");
+}
+
+static void TestBw2BmpReader()
+{
+    using (var stream = new MemoryStream(CreateBmp(
+               width: 3,
+               height: 2,
+               pixelDepth: 24,
+               storeCalculatedImageSize: true)))
+    {
+        Assert(Bw2BmpReader.TryRead(stream, out var info, out var error), $"24-bit BMP parsing: {error}");
+        Assert(info is not null, "24-bit BMP metadata exists");
+        Assert(info!.Width == 3 && info.Height == 2, "BMP dimensions");
+        Assert(info.RowOrder == Bw2BmpRowOrder.BottomUp, "bottom-up BMP row order");
+        Assert(info.PixelDepth == 24 && info.Compression == Bw2BmpCompression.Rgb, "24-bit BI_RGB declaration");
+        Assert(info.DibHeaderSize == 40 && info.PixelDataOffset == 54, "BMP header layout");
+        Assert(info.RowStride == 12 && info.PixelDataLength == 24, "BMP padded row calculation");
+        Assert(info.StoredImageSize == 24 && info.PixelDataEndOffset == stream.Length, "BMP stored image size and payload bounds");
+    }
+
+    using (var stream = new MemoryStream(CreateBmp(
+               width: 64,
+               height: 64,
+               pixelDepth: 32,
+               storeCalculatedImageSize: false)))
+    {
+        Assert(Bw2BmpReader.TryRead(stream, out var info, out var error), $"32-bit BMP parsing: {error}");
+        Assert(info!.PixelDepth == 32 && info.StoredImageSize == 0, "32-bit BMP without claimed alpha semantics");
+        Assert(info.RowStride == 256 && info.PixelDataLength == 16_384, "32-bit BMP payload layout");
+    }
+
+    using (var stream = new MemoryStream(CreateBmp(
+               width: 4,
+               height: -2,
+               pixelDepth: 24,
+               storeCalculatedImageSize: false)))
+    {
+        Assert(Bw2BmpReader.TryRead(stream, out var info, out var error), $"top-down BMP parsing: {error}");
+        Assert(info!.Height == 2 && info.RowOrder == Bw2BmpRowOrder.TopDown, "top-down BMP row order");
+    }
+
+    using (var stream = new MemoryStream(new byte[Bw2BmpReader.MinimumSize - 1]))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "truncated BMP header rejection");
+
+    var invalidSignature = CreateBmp(2, 2, 24, false);
+    invalidSignature[0] = (byte)'Z';
+    using (var stream = new MemoryStream(invalidSignature))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "invalid BMP signature rejection");
+
+    var invalidFileSize = CreateBmp(2, 2, 24, false);
+    BinaryPrimitives.WriteUInt32LittleEndian(invalidFileSize.AsSpan(2, 4), (uint)invalidFileSize.Length - 1);
+    using (var stream = new MemoryStream(invalidFileSize))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "mismatched BMP file size rejection");
+
+    var unsupportedDib = CreateBmp(2, 2, 24, false);
+    BinaryPrimitives.WriteUInt32LittleEndian(unsupportedDib.AsSpan(14, 4), 12);
+    using (var stream = new MemoryStream(unsupportedDib))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "unsupported BMP DIB header rejection");
+
+    var unsupportedDepth = CreateBmp(2, 2, 24, false);
+    BinaryPrimitives.WriteUInt16LittleEndian(unsupportedDepth.AsSpan(28, 2), 16);
+    using (var stream = new MemoryStream(unsupportedDepth))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "unsupported BMP pixel depth rejection");
+
+    var compressed = CreateBmp(2, 2, 24, false);
+    BinaryPrimitives.WriteUInt32LittleEndian(compressed.AsSpan(30, 4), 1);
+    using (var stream = new MemoryStream(compressed))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "compressed BMP rejection");
+
+    var colorTable = CreateBmp(2, 2, 24, false);
+    BinaryPrimitives.WriteUInt32LittleEndian(colorTable.AsSpan(46, 4), 1);
+    using (var stream = new MemoryStream(colorTable))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "BMP color-table rejection");
+
+    var invalidImageSize = CreateBmp(3, 2, 24, true);
+    BinaryPrimitives.WriteUInt32LittleEndian(invalidImageSize.AsSpan(34, 4), 23);
+    using (var stream = new MemoryStream(invalidImageSize))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "mismatched BMP image size rejection");
+
+    var truncatedPayload = CreateBmp(3, 2, 24, false);
+    Array.Resize(ref truncatedPayload, truncatedPayload.Length - 1);
+    BinaryPrimitives.WriteUInt32LittleEndian(truncatedPayload.AsSpan(2, 4), (uint)truncatedPayload.Length);
+    using (var stream = new MemoryStream(truncatedPayload))
+        Assert(!Bw2BmpReader.TryRead(stream, out _, out _), "truncated BMP pixel payload rejection");
+}
+
+static void TestBw2Rgb555Reader()
+{
+    const uint storedHeaderValue = 0x019D00B0;
+    var valid = CreateRgb555(storedHeaderValue);
+    BinaryPrimitives.WriteUInt16LittleEndian(valid.AsSpan(Bw2Rgb555Reader.HeaderSize, 2), 0x7C00);
+    BinaryPrimitives.WriteUInt16LittleEndian(valid.AsSpan(Bw2Rgb555Reader.HeaderSize + 2, 2), 0x03E0);
+    BinaryPrimitives.WriteUInt16LittleEndian(valid.AsSpan(Bw2Rgb555Reader.HeaderSize + 4, 2), 0x001F);
+
+    using (var stream = new MemoryStream(valid))
+    {
+        Assert(Bw2Rgb555Reader.TryRead(stream, out var info, out var error), $"BW2 .555 parsing: {error}");
+        Assert(info is not null, "BW2 .555 metadata exists");
+        Assert(info!.Width == 256 && info.Height == 256, "BW2 .555 dimensions");
+        Assert(info.PixelDepth == 16, "BW2 .555 pixel depth");
+        Assert(
+            info.PixelFormat == Bw2Rgb555PixelFormat.X1R5G5B5LittleEndian,
+            "BW2 .555 X1R5G5B5 layout");
+        Assert(info.StoredHeaderValue == storedHeaderValue, "BW2 .555 unknown header value preservation");
+        Assert(
+            info.PixelDataOffset == 16 && info.PixelDataLength == 131_072,
+            "BW2 .555 payload layout");
+        Assert(
+            info.PixelCount == 65_536 && info.SetHighBitPixelCount == 0,
+            "BW2 .555 unused high-bit validation");
+    }
+
+    using (var stream = new MemoryStream(new byte[Bw2Rgb555Reader.FileSize - 1]))
+        Assert(!Bw2Rgb555Reader.TryRead(stream, out _, out _), "wrong-size BW2 .555 rejection");
+
+    var invalidLeadingValue = CreateRgb555(storedHeaderValue);
+    BinaryPrimitives.WriteUInt32LittleEndian(invalidLeadingValue.AsSpan(0, 4), 1);
+    using (var stream = new MemoryStream(invalidLeadingValue))
+        Assert(!Bw2Rgb555Reader.TryRead(stream, out _, out _), "invalid BW2 .555 leading field rejection");
+
+    var invalidWidth = CreateRgb555(storedHeaderValue);
+    BinaryPrimitives.WriteUInt32LittleEndian(invalidWidth.AsSpan(4, 4), 255);
+    using (var stream = new MemoryStream(invalidWidth))
+        Assert(!Bw2Rgb555Reader.TryRead(stream, out _, out _), "invalid BW2 .555 width rejection");
+
+    var invalidHeight = CreateRgb555(storedHeaderValue);
+    BinaryPrimitives.WriteUInt32LittleEndian(invalidHeight.AsSpan(8, 4), 255);
+    using (var stream = new MemoryStream(invalidHeight))
+        Assert(!Bw2Rgb555Reader.TryRead(stream, out _, out _), "invalid BW2 .555 height rejection");
+
+    var setHighBit = CreateRgb555(storedHeaderValue, 0x8000);
+    using (var stream = new MemoryStream(setHighBit))
+        Assert(!Bw2Rgb555Reader.TryRead(stream, out _, out _), "set BW2 .555 high-bit rejection");
+
+    var alternateStoredHeaderValue = CreateRgb555(0x12345678);
+    using (var stream = new MemoryStream(alternateStoredHeaderValue))
+    {
+        Assert(
+            Bw2Rgb555Reader.TryRead(stream, out var info, out var error),
+            $"unknown BW2 .555 header value remains non-semantic: {error}");
+        Assert(info!.StoredHeaderValue == 0x12345678, "alternate unknown BW2 .555 header value preservation");
+    }
+}
+
 static void TestAssetInspectionProviders(string tempRoot)
 {
     var service = new Bw2AssetInspectionService();
@@ -427,14 +1001,124 @@ static void TestAssetInspectionProviders(string tempRoot)
             && count == 1),
         "loose BWM metadata parsing");
     Assert(
-        bwmInspection.ReferenceView == Bw2AssetReferenceView.ModelToTexture,
+        bwmInspection.ReferenceView == Bw2AssetReferenceView.ModelToImage,
         "loose BWM keeps forward reference view without inventing a root relationship");
     Assert(!bwmInspection.HasPreview, "BWM preview remains unavailable in stage 3.3");
 
-    var fallbackPath = Path.Combine(tempRoot, "loose-image.tga");
+    var tgaPath = Path.Combine(tempRoot, "loose-image.tga");
+    File.WriteAllBytes(tgaPath, CreateTga(
+        Bw2TgaImageType.RunLengthEncodedTrueColor,
+        width: 3,
+        height: 2,
+        pixelDepth: 32,
+        attributeBits: 8,
+        withFooter: true,
+        withExtensionArea: true,
+        declaredExtensionAreaSize: 494));
+    var tgaContext = Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(tgaPath, "data/root/loose-image.tga"));
+    var tgaInspection = service.Inspect(tgaContext);
+    Assert(tgaInspection.ProviderId == "tga", "loose TGA provider selection");
+    Assert(tgaInspection.Status == Bw2AssetInspectionStatus.Valid, "loose TGA valid inspection state");
+    Assert(
+        tgaInspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.ImageEncoding
+            && detail.Value is Bw2TgaImageType.RunLengthEncodedTrueColor),
+        "loose TGA encoding metadata");
+    Assert(
+        tgaInspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.DeclaredAttributeBits
+            && detail.Value is byte attributeBits
+            && attributeBits == 8),
+        "loose TGA declared attribute-bit metadata");
+    Assert(
+        tgaInspection.ReferenceView == Bw2AssetReferenceView.ImageToModel,
+        "TGA exposes generic reverse image relationship context");
+    Assert(!tgaInspection.HasPreview, "TGA preview remains unavailable in stage 0.6.2B");
+
+    var invalidTgaPath = Path.Combine(tempRoot, "invalid-image.tga");
+    File.WriteAllBytes(invalidTgaPath, new byte[Bw2TgaReader.HeaderSize - 1]);
+    var invalidTgaInspection = service.Inspect(Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(invalidTgaPath, "data/root/invalid-image.tga")));
+    Assert(invalidTgaInspection.ProviderId == "tga", "invalid TGA provider selection");
+    Assert(
+        invalidTgaInspection.Status == Bw2AssetInspectionStatus.Invalid
+            && !string.IsNullOrWhiteSpace(invalidTgaInspection.Error),
+        "invalid TGA reason propagation");
+
+    var bmpPath = Path.Combine(tempRoot, "loose-image.bmp");
+    File.WriteAllBytes(bmpPath, CreateBmp(
+        width: 3,
+        height: 2,
+        pixelDepth: 24,
+        storeCalculatedImageSize: true));
+    var bmpInspection = service.Inspect(Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(bmpPath, "data/root/loose-image.bmp")));
+    Assert(bmpInspection.ProviderId == "bmp", "loose BMP provider selection");
+    Assert(bmpInspection.Status == Bw2AssetInspectionStatus.Valid, "loose BMP valid inspection state");
+    Assert(
+        bmpInspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.DibHeader
+            && detail.Value is Bw2BmpInfo info
+            && info.DibHeaderSize == 40),
+        "loose BMP DIB metadata");
+    Assert(
+        bmpInspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.BmpCompression
+            && detail.Value is Bw2BmpCompression.Rgb),
+        "loose BMP compression metadata");
+    Assert(
+        bmpInspection.ReferenceView == Bw2AssetReferenceView.ImageToModel,
+        "BMP exposes generic reverse image relationship context");
+    Assert(!bmpInspection.HasPreview, "BMP preview remains unavailable in stage 0.6.2C");
+
+    var invalidBmpPath = Path.Combine(tempRoot, "invalid-image.bmp");
+    File.WriteAllBytes(invalidBmpPath, new byte[Bw2BmpReader.MinimumSize - 1]);
+    var invalidBmpInspection = service.Inspect(Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(invalidBmpPath, "data/root/invalid-image.bmp")));
+    Assert(invalidBmpInspection.ProviderId == "bmp", "invalid BMP provider selection");
+    Assert(
+        invalidBmpInspection.Status == Bw2AssetInspectionStatus.Invalid
+            && !string.IsNullOrWhiteSpace(invalidBmpInspection.Error),
+        "invalid BMP reason propagation");
+
+    var rgb555Path = Path.Combine(tempRoot, "loose-sky.555");
+    File.WriteAllBytes(rgb555Path, CreateRgb555(0x019D00B0));
+    var rgb555Inspection = service.Inspect(Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(rgb555Path, "data/weathersystem/loose-sky.555")));
+    Assert(rgb555Inspection.ProviderId == "rgb555", "loose .555 provider selection");
+    Assert(rgb555Inspection.Status == Bw2AssetInspectionStatus.Valid, "loose .555 valid inspection state");
+    Assert(
+        rgb555Inspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.PixelFormat
+            && detail.Value is Bw2Rgb555PixelFormat pixelFormat
+            && pixelFormat == Bw2Rgb555PixelFormat.X1R5G5B5LittleEndian),
+        "loose .555 pixel-format metadata");
+    Assert(
+        rgb555Inspection.Details.Any(detail =>
+            detail.Kind == Bw2AssetDetailKind.StoredHeaderValue
+            && detail.Value is uint value
+            && value == 0x019D00B0),
+        "loose .555 unknown header-value propagation");
+    Assert(
+        rgb555Inspection.ReferenceView == Bw2AssetReferenceView.ImageToModel,
+        ".555 exposes generic reverse image relationship context");
+    Assert(!rgb555Inspection.HasPreview, ".555 preview remains unavailable in stage 0.6.2D");
+
+    var invalidRgb555Path = Path.Combine(tempRoot, "invalid-sky.555");
+    File.WriteAllBytes(invalidRgb555Path, new byte[Bw2Rgb555Reader.HeaderSize - 1]);
+    var invalidRgb555Inspection = service.Inspect(Bw2AssetInspectionContext.FromSource(
+        new LooseFileAssetSource(invalidRgb555Path, "data/weathersystem/invalid-sky.555")));
+    Assert(invalidRgb555Inspection.ProviderId == "rgb555", "invalid .555 provider selection");
+    Assert(
+        invalidRgb555Inspection.Status == Bw2AssetInspectionStatus.Invalid
+            && !string.IsNullOrWhiteSpace(invalidRgb555Inspection.Error),
+        "invalid .555 reason propagation");
+
+    var fallbackPath = Path.Combine(tempRoot, "loose-unknown.xyz");
     File.WriteAllBytes(fallbackPath, [1, 2, 3, 4]);
     var fallbackContext = Bw2AssetInspectionContext.FromSource(
-        new LooseFileAssetSource(fallbackPath, "data/root/loose-image.tga"));
+        new LooseFileAssetSource(fallbackPath, "data/root/loose-unknown.xyz"));
     var fallbackInspection = service.Inspect(fallbackContext);
     Assert(fallbackInspection.ProviderId == "fallback", "neutral fallback provider selection");
     Assert(
@@ -443,9 +1127,10 @@ static void TestAssetInspectionProviders(string tempRoot)
     Assert(
         fallbackInspection.ReferenceView == Bw2AssetReferenceView.Unavailable,
         "fallback reference view remains unavailable");
+    Assert(!fallbackInspection.HasContents, "fallback contents remain unavailable");
 
     var extensibleService = new Bw2AssetInspectionService([new TestTgaMetadataProvider()]);
-    var extensibleInspection = extensibleService.Inspect(fallbackContext);
+    var extensibleInspection = extensibleService.Inspect(tgaContext);
     Assert(extensibleInspection.ProviderId == "test-tga", "additional provider registration priority");
     Assert(
         extensibleInspection.Preview is { Kind: Bw2AssetPreviewKind.Image, ViewerId: "test-viewer" },
@@ -607,20 +1292,23 @@ static void CreateArchiveWithContents(string path, IReadOnlyList<(string Path, b
 static byte[] CreateBwm(
     uint version,
     uint modelType,
-    IReadOnlyList<(Bw2TextureRole Role, string Path)> references)
+    IReadOnlyList<(Bw2TextureRole Role, string Path)> references,
+    string materialName = "1 - default")
 {
     return CreateIndexedBwm(
         version,
         modelType,
         materialCount: 1,
-        references.Select(reference => (0u, reference.Role, reference.Path)).ToArray());
+        references.Select(reference => (0u, reference.Role, reference.Path)).ToArray(),
+        materialNames: [materialName]);
 }
 
 static byte[] CreateIndexedBwm(
     uint version,
     uint modelType,
     uint materialCount,
-    IReadOnlyList<(uint MaterialIndex, Bw2TextureRole Role, string Path)> references)
+    IReadOnlyList<(uint MaterialIndex, Bw2TextureRole Role, string Path)> references,
+    IReadOnlyList<string>? materialNames = null)
 {
     var bytes = new byte[checked(Bw2BwmReader.HeaderSize + (int)materialCount * Bw2BwmReader.MaterialSize)];
     WriteFixedAscii(bytes, 0, 40, "LiOnHeAdMODEL");
@@ -629,6 +1317,23 @@ static byte[] CreateIndexedBwm(
     BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(48, 4), version);
     BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(124, 4), materialCount);
     BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(176, 4), modelType);
+
+    if (materialNames is not null)
+    {
+        if (materialNames.Count != materialCount)
+            throw new ArgumentException("Material-name count must match the material table.", nameof(materialNames));
+
+        for (var materialIndex = 0; materialIndex < materialNames.Count; materialIndex++)
+        {
+            var materialOffset = checked(
+                Bw2BwmReader.HeaderSize + materialIndex * Bw2BwmReader.MaterialSize);
+            WriteFixedAscii(
+                bytes,
+                materialOffset + Bw2BwmReader.MaterialNameOffset,
+                Bw2BwmReader.FixedStringSize,
+                materialNames[materialIndex]);
+        }
+    }
 
     foreach (var reference in references)
     {
@@ -641,13 +1346,13 @@ static byte[] CreateIndexedBwm(
             Bw2TextureRole.LightMap => 64,
             Bw2TextureRole.GrowthMap => 128,
             Bw2TextureRole.SpecularMap => 192,
-            Bw2TextureRole.AnimatedMap => 256,
+            Bw2TextureRole.AdditionalMap => 256,
             Bw2TextureRole.NormalMap => 320,
             _ => throw new ArgumentOutOfRangeException()
         };
         var materialOffset = checked(
             Bw2BwmReader.HeaderSize + (int)reference.MaterialIndex * Bw2BwmReader.MaterialSize);
-        WriteFixedAscii(bytes, materialOffset + slotOffset, 64, reference.Path);
+        WriteFixedAscii(bytes, materialOffset + slotOffset, Bw2BwmReader.FixedStringSize, reference.Path);
     }
 
     return bytes;
@@ -696,6 +1401,126 @@ static byte[] CreateDx10Dds(
     BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(136, 4), miscFlag);
     BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(140, 4), arraySize);
     return bytes;
+}
+
+static byte[] CreateBmp(
+    int width,
+    int height,
+    ushort pixelDepth,
+    bool storeCalculatedImageSize)
+{
+    var absoluteHeight = Math.Abs(height);
+    var rowStride = checked((int)(((long)width * pixelDepth + 31L) / 32L * 4L));
+    var pixelDataLength = checked(rowStride * absoluteHeight);
+    var bytes = new byte[checked(Bw2BmpReader.MinimumSize + pixelDataLength)];
+
+    bytes[0] = (byte)'B';
+    bytes[1] = (byte)'M';
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(2, 4), (uint)bytes.Length);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(10, 4), (uint)Bw2BmpReader.MinimumSize);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(14, 4), (uint)Bw2BmpReader.BitmapInfoHeaderSize);
+    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(18, 4), width);
+    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(22, 4), height);
+    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(26, 2), 1);
+    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(28, 2), pixelDepth);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(30, 4), (uint)Bw2BmpCompression.Rgb);
+    BinaryPrimitives.WriteUInt32LittleEndian(
+        bytes.AsSpan(34, 4),
+        storeCalculatedImageSize ? (uint)pixelDataLength : 0);
+    return bytes;
+}
+
+static byte[] CreateRgb555(uint storedHeaderValue, ushort pixelValue = 0)
+{
+    var bytes = new byte[Bw2Rgb555Reader.FileSize];
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0, 4), 0);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4, 4), Bw2Rgb555Reader.Width);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8, 4), Bw2Rgb555Reader.Height);
+    BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(12, 4), storedHeaderValue);
+
+    for (var offset = Bw2Rgb555Reader.HeaderSize; offset < bytes.Length; offset += 2)
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(offset, 2), pixelValue);
+
+    return bytes;
+}
+
+static byte[] CreateTga(
+    Bw2TgaImageType imageType,
+    ushort width,
+    ushort height,
+    byte pixelDepth,
+    byte attributeBits = 0,
+    byte descriptorFlags = 0,
+    bool withFooter = false,
+    bool withExtensionArea = false,
+    ushort? declaredExtensionAreaSize = null,
+    byte imageIdLength = 0,
+    byte[]? pixelPayload = null)
+{
+    if (withExtensionArea)
+        withFooter = true;
+
+    var bytesPerPixel = (pixelDepth + 7) / 8;
+    pixelPayload ??= imageType == Bw2TgaImageType.RunLengthEncodedTrueColor
+        ? CreateTgaRawRlePayload(width, height, bytesPerPixel)
+        : new byte[checked(width * height * bytesPerPixel)];
+
+    const ushort extensionAreaSize = 495;
+    var extensionSize = withExtensionArea ? extensionAreaSize : 0;
+    var footerSize = withFooter ? Bw2TgaReader.FooterSize : 0;
+    var bytes = new byte[checked(
+        Bw2TgaReader.HeaderSize
+        + imageIdLength
+        + pixelPayload.Length
+        + extensionSize
+        + footerSize)];
+
+    bytes[0] = imageIdLength;
+    bytes[1] = 0;
+    bytes[2] = (byte)imageType;
+    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(12, 2), width);
+    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(14, 2), height);
+    bytes[16] = pixelDepth;
+    bytes[17] = (byte)(descriptorFlags | attributeBits);
+
+    var pixelOffset = Bw2TgaReader.HeaderSize + imageIdLength;
+    pixelPayload.CopyTo(bytes, pixelOffset);
+
+    var extensionOffset = pixelOffset + pixelPayload.Length;
+    if (withExtensionArea)
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            bytes.AsSpan(extensionOffset, 2),
+            declaredExtensionAreaSize ?? extensionAreaSize);
+
+    if (withFooter)
+    {
+        var footerOffset = bytes.Length - Bw2TgaReader.FooterSize;
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            bytes.AsSpan(footerOffset, 4),
+            withExtensionArea ? (uint)extensionOffset : 0);
+        Encoding.ASCII.GetBytes("TRUEVISION-XFILE.\0").CopyTo(bytes, footerOffset + 8);
+    }
+
+    return bytes;
+}
+
+static byte[] CreateTgaRawRlePayload(ushort width, ushort height, int bytesPerPixel)
+{
+    var bytes = new List<byte>();
+    for (var row = 0; row < height; row++)
+    {
+        var remaining = (int)width;
+        while (remaining > 0)
+        {
+            var packetPixels = Math.Min(remaining, 128);
+            bytes.Add((byte)(packetPixels - 1));
+            for (var index = 0; index < packetPixels * bytesPerPixel; index++)
+                bytes.Add(0);
+            remaining -= packetPixels;
+        }
+    }
+
+    return bytes.ToArray();
 }
 
 static byte[] CreateBc1Block(ushort color0, ushort color1, uint selectors)

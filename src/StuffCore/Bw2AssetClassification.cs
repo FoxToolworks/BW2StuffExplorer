@@ -38,7 +38,7 @@ public enum Bw2TextureRole
     LightMap,
     GrowthMap,
     SpecularMap,
-    AnimatedMap,
+    AdditionalMap,
     NormalMap,
     BakedTexture,
     ScaleBiasMap,

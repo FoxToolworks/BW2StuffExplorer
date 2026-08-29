@@ -735,6 +735,14 @@ public partial class MainWindow : Window
         else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.E) { ExportSelected_Click(sender, e); e.Handled = true; }
         else if (e.Key == Key.F5) { Refresh_Click(sender, e); e.Handled = true; }
         else if (e.Key == Key.Escape && !string.IsNullOrEmpty(SearchBox.Text)) { SearchBox.Clear(); e.Handled = true; }
+        else if (Keyboard.Modifiers == ModifierKeys.None
+            && e.Key == Key.Enter
+            && FileGrid.IsKeyboardFocusWithin
+            && SelectedEntry is not null)
+        {
+            Properties_Click(sender, e);
+            e.Handled = true;
+        }
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)

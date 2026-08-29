@@ -49,7 +49,7 @@ internal static class AssetDisplayNames
         Bw2TextureRole.LightMap => MainWindow.S("TextureRoleLightMap"),
         Bw2TextureRole.GrowthMap => MainWindow.S("TextureRoleGrowthMap"),
         Bw2TextureRole.SpecularMap => MainWindow.S("TextureRoleSpecularMap"),
-        Bw2TextureRole.AnimatedMap => MainWindow.S("TextureRoleAnimatedMap"),
+        Bw2TextureRole.AdditionalMap => MainWindow.S("TextureRoleAdditionalMap"),
         Bw2TextureRole.NormalMap => MainWindow.S("TextureRoleNormalMap"),
         Bw2TextureRole.BakedTexture => MainWindow.S("TextureRoleBakedTexture"),
         Bw2TextureRole.ScaleBiasMap => MainWindow.S("TextureRoleScaleBiasMap"),

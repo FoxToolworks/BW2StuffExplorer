@@ -62,6 +62,24 @@ public enum Bw2AssetDetailKind
     LinearSize,
     ArraySize,
     CubemapFaces,
+    ImageEncoding,
+    PixelDepth,
+    DeclaredAttributeBits,
+    ImageOrigin,
+    PixelOrder,
+    Interleaving,
+    ColorMap,
+    ImageIdLength,
+    PixelDataOffset,
+    TgaFooter,
+    TgaExtensionArea,
+    DibHeader,
+    BmpCompression,
+    BmpRowOrder,
+    ChannelLayout,
+    Rgb555HighBit,
+    PixelDataSize,
+    StoredHeaderValue,
     Signature,
     Magic,
     BwmVersion,
@@ -80,8 +98,8 @@ public enum Bw2AssetInspectionStatus
 public enum Bw2AssetReferenceView
 {
     Unavailable,
-    ModelToTexture,
-    TextureToModel
+    ModelToImage,
+    ImageToModel
 }
 
 public enum Bw2AssetReferenceEmptyReason
@@ -89,7 +107,7 @@ public enum Bw2AssetReferenceEmptyReason
     Unavailable,
     InvalidBwm,
     NoBwmTextures,
-    NoDdsModels
+    NoImageReferences
 }
 
 public enum Bw2AssetPreviewKind
@@ -108,25 +126,50 @@ public sealed record Bw2AssetPreviewDescriptor(
 public sealed record Bw2AssetReference(
     string ModelPath,
     uint MaterialIndex,
+    string MaterialName,
     Bw2TextureRole Role,
     string ReferencePath,
     Bw2ReferenceResolutionStatus ResolutionStatus,
     string? ResolvedAssetPath,
     IReadOnlyList<string> CandidateAssetPaths)
 {
-    internal static Bw2AssetReference FromRelationship(Bw2TextureRelationship relationship) => new(
+    internal static Bw2AssetReference FromRelationship(Bw2ImageRelationship relationship) => new(
         relationship.ModelEntry.Path,
         relationship.MaterialIndex,
+        relationship.MaterialName,
         relationship.Role,
         relationship.ReferencePath,
         relationship.ResolutionStatus,
-        relationship.TextureEntry?.Path,
+        relationship.ImageEntry?.Path,
         relationship.Candidates.Select(candidate => candidate.Path).ToArray());
 }
 
 public sealed record Bw2AssetDetail(
     Bw2AssetDetailKind Kind,
     object Value);
+
+public abstract record Bw2AssetContent;
+
+public sealed record Bw2BwmMaterialContent(
+    uint MaterialIndex,
+    string StoredName,
+    string DiffuseMap,
+    string LightMap,
+    string GrowthMap,
+    string SpecularMap,
+    string AdditionalMap,
+    string NormalMap) : Bw2AssetContent
+{
+    internal static Bw2BwmMaterialContent FromMaterial(Bw2BwmMaterial material) => new(
+        material.Index,
+        material.StoredName,
+        material.DiffuseMap,
+        material.LightMap,
+        material.GrowthMap,
+        material.SpecularMap,
+        material.AdditionalMap,
+        material.NormalMap);
+}
 
 public sealed class Bw2AssetInspection
 {
@@ -138,7 +181,8 @@ public sealed class Bw2AssetInspection
         IReadOnlyList<Bw2AssetReference> references,
         Bw2AssetReferenceEmptyReason emptyReferenceReason,
         string? error = null,
-        Bw2AssetPreviewDescriptor? preview = null)
+        Bw2AssetPreviewDescriptor? preview = null,
+        IReadOnlyList<Bw2AssetContent>? contents = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
         ProviderId = providerId;
@@ -153,6 +197,7 @@ public sealed class Bw2AssetInspection
         EmptyReferenceReason = emptyReferenceReason;
         Error = error;
         Preview = preview;
+        Contents = contents?.ToArray() ?? Array.Empty<Bw2AssetContent>();
     }
 
     public string ProviderId { get; }
@@ -163,7 +208,9 @@ public sealed class Bw2AssetInspection
     public Bw2AssetReferenceEmptyReason EmptyReferenceReason { get; }
     public string? Error { get; }
     public Bw2AssetPreviewDescriptor? Preview { get; }
+    public IReadOnlyList<Bw2AssetContent> Contents { get; }
     public bool HasPreview => Preview is not null;
+    public bool HasContents => Contents.Count > 0;
 }
 
 public sealed class Bw2AssetInspectionContext
@@ -205,7 +252,7 @@ public sealed class Bw2AssetInspectionContext
             analysis.GetRelationshipsFromModel(entry)
                 .Select(Bw2AssetReference.FromRelationship)
                 .ToArray(),
-            analysis.GetRelationshipsForTexture(entry)
+            analysis.GetRelationshipsForImage(entry)
                 .Select(Bw2AssetReference.FromRelationship)
                 .ToArray());
     }
@@ -236,6 +283,9 @@ public sealed class Bw2AssetInspectionService
         if (additionalProviders is not null)
             providers.AddRange(additionalProviders);
         providers.Add(new Bw2DdsMetadataProvider());
+        providers.Add(new Bw2TgaMetadataProvider());
+        providers.Add(new Bw2BmpMetadataProvider());
+        providers.Add(new Bw2Rgb555MetadataProvider());
         providers.Add(new Bw2BwmMetadataProvider());
         providers.Add(new Bw2FallbackMetadataProvider());
         _providers = providers;
@@ -312,9 +362,9 @@ internal sealed class Bw2DdsMetadataProvider : IBw2AssetMetadataProvider
             Id,
             Bw2AssetInspectionStatus.Valid,
             details,
-            Bw2AssetReferenceView.TextureToModel,
+            Bw2AssetReferenceView.ImageToModel,
             context.ReferencesToAsset,
-            Bw2AssetReferenceEmptyReason.NoDdsModels);
+            Bw2AssetReferenceEmptyReason.NoImageReferences);
     }
 
     private Bw2AssetInspection InvalidDds(
@@ -325,10 +375,192 @@ internal sealed class Bw2DdsMetadataProvider : IBw2AssetMetadataProvider
             [
                 new Bw2AssetDetail(Bw2AssetDetailKind.Format, "DDS")
             ],
-            Bw2AssetReferenceView.TextureToModel,
+            Bw2AssetReferenceView.ImageToModel,
             references,
-            Bw2AssetReferenceEmptyReason.NoDdsModels,
+            Bw2AssetReferenceEmptyReason.NoImageReferences,
             error);
+}
+
+internal sealed class Bw2TgaMetadataProvider : IBw2AssetMetadataProvider
+{
+    public string Id => "tga";
+
+    public bool CanInspect(Bw2AssetInspectionContext context) =>
+        context.Source.Extension.Equals("TGA", StringComparison.OrdinalIgnoreCase);
+
+    public Bw2AssetInspection Inspect(Bw2AssetInspectionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        Bw2TgaInfo? info;
+        string error;
+        try
+        {
+            using var stream = context.Source.OpenRead();
+            if (!Bw2TgaReader.TryRead(stream, out info, out error) || info is null)
+                return InvalidTga(error, context.ReferencesToAsset);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return InvalidTga(
+                $"The TGA data could not be read: {exception.Message}",
+                context.ReferencesToAsset);
+        }
+
+        return new Bw2AssetInspection(
+            Id,
+            Bw2AssetInspectionStatus.Valid,
+            [
+                new Bw2AssetDetail(Bw2AssetDetailKind.Format, "TGA"),
+                new Bw2AssetDetail(Bw2AssetDetailKind.Dimensions, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.ImageEncoding, info.ImageType),
+                new Bw2AssetDetail(Bw2AssetDetailKind.ImageOrigin, info.VerticalOrigin),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelOrder, info.HorizontalOrder),
+                new Bw2AssetDetail(Bw2AssetDetailKind.Interleaving, info.Interleaving),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDepth, info.PixelDepth),
+                new Bw2AssetDetail(Bw2AssetDetailKind.DeclaredAttributeBits, info.AttributeBits),
+                new Bw2AssetDetail(Bw2AssetDetailKind.ColorMap, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.ImageIdLength, info.ImageIdLength),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDataOffset, info.PixelDataOffset),
+                new Bw2AssetDetail(Bw2AssetDetailKind.TgaFooter, info.HasTga20Footer),
+                new Bw2AssetDetail(Bw2AssetDetailKind.TgaExtensionArea, info)
+            ],
+            Bw2AssetReferenceView.ImageToModel,
+            context.ReferencesToAsset,
+            Bw2AssetReferenceEmptyReason.NoImageReferences);
+    }
+
+    private Bw2AssetInspection InvalidTga(
+        string error,
+        IReadOnlyList<Bw2AssetReference> references) => new(
+        Id,
+        Bw2AssetInspectionStatus.Invalid,
+        [
+            new Bw2AssetDetail(Bw2AssetDetailKind.Format, "TGA")
+        ],
+        Bw2AssetReferenceView.ImageToModel,
+        references,
+        Bw2AssetReferenceEmptyReason.NoImageReferences,
+        error);
+}
+
+internal sealed class Bw2BmpMetadataProvider : IBw2AssetMetadataProvider
+{
+    public string Id => "bmp";
+
+    public bool CanInspect(Bw2AssetInspectionContext context) =>
+        context.Source.Extension.Equals("BMP", StringComparison.OrdinalIgnoreCase);
+
+    public Bw2AssetInspection Inspect(Bw2AssetInspectionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        Bw2BmpInfo? info;
+        string error;
+        try
+        {
+            using var stream = context.Source.OpenRead();
+            if (!Bw2BmpReader.TryRead(stream, out info, out error) || info is null)
+                return InvalidBmp(error, context.ReferencesToAsset);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return InvalidBmp(
+                $"The BMP data could not be read: {exception.Message}",
+                context.ReferencesToAsset);
+        }
+
+        return new Bw2AssetInspection(
+            Id,
+            Bw2AssetInspectionStatus.Valid,
+            [
+                new Bw2AssetDetail(Bw2AssetDetailKind.Format, "BMP"),
+                new Bw2AssetDetail(Bw2AssetDetailKind.DibHeader, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.Dimensions, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.BmpRowOrder, info.RowOrder),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDepth, info.PixelDepth),
+                new Bw2AssetDetail(Bw2AssetDetailKind.BmpCompression, info.Compression),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDataOffset, (long)info.PixelDataOffset)
+            ],
+            Bw2AssetReferenceView.ImageToModel,
+            context.ReferencesToAsset,
+            Bw2AssetReferenceEmptyReason.NoImageReferences);
+    }
+
+    private Bw2AssetInspection InvalidBmp(
+        string error,
+        IReadOnlyList<Bw2AssetReference> references) => new(
+        Id,
+        Bw2AssetInspectionStatus.Invalid,
+        [
+            new Bw2AssetDetail(Bw2AssetDetailKind.Format, "BMP")
+        ],
+        Bw2AssetReferenceView.ImageToModel,
+        references,
+        Bw2AssetReferenceEmptyReason.NoImageReferences,
+        error);
+}
+
+internal sealed class Bw2Rgb555MetadataProvider : IBw2AssetMetadataProvider
+{
+    public string Id => "rgb555";
+
+    public bool CanInspect(Bw2AssetInspectionContext context) =>
+        context.Source.Extension.Equals("555", StringComparison.OrdinalIgnoreCase);
+
+    public Bw2AssetInspection Inspect(Bw2AssetInspectionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        Bw2Rgb555Info? info;
+        string error;
+        try
+        {
+            using var stream = context.Source.OpenRead();
+            if (!Bw2Rgb555Reader.TryRead(stream, out info, out error) || info is null)
+                return InvalidRgb555(error, context.ReferencesToAsset);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return InvalidRgb555(
+                $"The .555 data could not be read: {exception.Message}",
+                context.ReferencesToAsset);
+        }
+
+        return new Bw2AssetInspection(
+            Id,
+            Bw2AssetInspectionStatus.Valid,
+            [
+                new Bw2AssetDetail(Bw2AssetDetailKind.Format, "555"),
+                new Bw2AssetDetail(Bw2AssetDetailKind.Dimensions, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDepth, info.PixelDepth),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelFormat, info.PixelFormat),
+                new Bw2AssetDetail(Bw2AssetDetailKind.ChannelLayout, info.PixelFormat),
+                new Bw2AssetDetail(Bw2AssetDetailKind.Rgb555HighBit, info),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDataOffset, info.PixelDataOffset),
+                new Bw2AssetDetail(Bw2AssetDetailKind.PixelDataSize, info.PixelDataLength),
+                new Bw2AssetDetail(Bw2AssetDetailKind.StoredHeaderValue, info.StoredHeaderValue)
+            ],
+            Bw2AssetReferenceView.ImageToModel,
+            context.ReferencesToAsset,
+            Bw2AssetReferenceEmptyReason.NoImageReferences);
+    }
+
+    private Bw2AssetInspection InvalidRgb555(
+        string error,
+        IReadOnlyList<Bw2AssetReference> references) => new(
+        Id,
+        Bw2AssetInspectionStatus.Invalid,
+        [
+            new Bw2AssetDetail(Bw2AssetDetailKind.Format, "555")
+        ],
+        Bw2AssetReferenceView.ImageToModel,
+        references,
+        Bw2AssetReferenceEmptyReason.NoImageReferences,
+        error);
 }
 
 internal sealed class Bw2BwmMetadataProvider : IBw2AssetMetadataProvider
@@ -371,7 +603,7 @@ internal sealed class Bw2BwmMetadataProvider : IBw2AssetMetadataProvider
                 [
                     new Bw2AssetDetail(Bw2AssetDetailKind.Format, "BWM")
                 ],
-                Bw2AssetReferenceView.ModelToTexture,
+                Bw2AssetReferenceView.ModelToImage,
                 Array.Empty<Bw2AssetReference>(),
                 Bw2AssetReferenceEmptyReason.InvalidBwm,
                 error);
@@ -389,9 +621,12 @@ internal sealed class Bw2BwmMetadataProvider : IBw2AssetMetadataProvider
                 new Bw2AssetDetail(Bw2AssetDetailKind.MaterialCount, model.MaterialCount),
                 new Bw2AssetDetail(Bw2AssetDetailKind.TextureReferenceCount, model.TextureReferences.Count)
             ],
-            Bw2AssetReferenceView.ModelToTexture,
+            Bw2AssetReferenceView.ModelToImage,
             context.ReferencesFromAsset,
-            Bw2AssetReferenceEmptyReason.NoBwmTextures);
+            Bw2AssetReferenceEmptyReason.NoBwmTextures,
+            contents: model.Materials
+                .Select(Bw2BwmMaterialContent.FromMaterial)
+                .ToArray());
     }
 }
 

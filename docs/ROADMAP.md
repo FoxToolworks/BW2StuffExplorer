@@ -1,107 +1,86 @@
 # Roadmap
 
-## Completed milestones
+BW2 Stuff Explorer is being developed in two broad phases: first understand the packed `Everything.stuff` asset set as completely and conservatively as possible, then expand the same inspection model to the loose Black & White 2 installation data.
 
-### 0.1 — format and functionality proof
+The project remains read-only through Version 1.0.
 
-- safe read-only archive parser;
-- directory tree, search and selective extraction;
-- dependency-free synthetic archive self-test.
+## Current state — 0.6
 
-### 0.2 — explorer UX
+Version 0.6 provides:
 
-- English UI with centralized strings for future localization;
-- File, View, Tools and Help menus;
-- file and folder context menus;
-- multiple selection, keyboard shortcuts and sortable columns;
-- human-readable sizes, entry properties and improved status feedback.
+- stable read-only STUFF browsing, navigation, search and export;
+- friendly classification for all 13 format families in the verified retail archive;
+- specialized inspection for DDS, BWM, TGA, BMP and `.555`;
+- complete BWM material contents and BWM-driven image relationships;
+- a shared provider/inspection model designed for additional formats and loose files;
+- synthetic tests plus an optional strict retail-corpus regression.
 
-### 0.2.1 — navigation and organization
+See the [research index](research/README.md) for the evidence behind the implemented format interpretations.
 
-- direct-content folder browsing with recursive search;
-- Back, Forward and Up navigation with clickable breadcrumbs;
-- Edit menu clipboard actions;
-- configurable sorting and file-type grouping.
+## Path to 1.0 — finish `Everything.stuff`
 
-### 0.2.2 — metadata and layout fixes
+The exact minor-version split may change as research reveals natural format groups, but the priority order is:
 
-- identified and exposed the archived Unix modification timestamp;
-- added Modified display, sorting and entry-property details;
-- stabilized user-resizable file-list column widths.
+### Creature formats
 
-### 0.3 — robust long-running operations
+- CSK — creature model/morph data;
+- CHA — creature hair/fur data;
+- CCS — creature support/bounding data;
+- add Contents and References only where decoded structures provide explicit evidence.
 
-- responsive byte- and file-level progress for every export mode;
-- cancellation from the status bar, `Esc` and graceful application close;
-- atomic per-file writes with incomplete-file cleanup;
-- destination preflight, overwrite confirmation and detailed I/O errors;
-- expanded malformed-archive and cancellation self-tests.
+### Camera and area formats
 
-### 0.4 — presentation and first public release
+- CAM — camera/path sample data;
+- EXC — camera exclusion zones;
+- expose factual records without naming unresolved fields prematurely.
 
-- compact Windows 11-inspired interface and application icon;
-- refined navigation, breadcrumbs, search and entry properties;
-- regional date, time and number formatting;
-- release metadata, documentation and packaging preparation.
+### Animation, dialogue and video
 
-## Completed Version 0.5
+- ABN — advisor animation banks;
+- DAN — dialogue annotation/lip-sync packs;
+- BIK — factual Bink video metadata where useful;
+- preserve explicit stored identifiers and relationships when they can be proven.
 
-### 0.5 — file-type analysis
+### 1.0 completion gate
 
-- [x] introduce separate format, asset-category and file-type classifications;
-- [x] replace terse extension-only names with friendly descriptions;
-- [x] add grouping by friendly file type and broader asset category;
-- [x] refine BWM entries as static, skinned or unknown model data from their headers;
-- [x] infer confirmed DDS roles from BWM material references;
-- [x] restore grouped-list virtualization and responsive incremental search for large result sets;
-- [x] add conservative landscape and creature DDS family roles while storing asset context separately;
-- [x] keep DDS file type generic while retaining detected texture roles for details and optional role grouping;
-- [x] add General, File details and References properties tabs plus factual DDS header metadata;
-- [x] distinguish DDS alpha capability from actual non-opaque BC1/BC2/BC3 payload data;
-- [x] add BWM metadata and populate the References table in both model-to-texture and texture-to-model directions;
-- [x] introduce a shared metadata-provider interface, neutral asset sources and optional preview descriptors for additional formats and future root loading;
-- [x] widen entry properties, reset new views to the top-left and remove the normal-width file-list overflow;
-- [x] refine the References table for narrow-window readability and long paths;
-- [x] polish File details spacing and visual hierarchy without changing factual metadata;
-- [x] give General the same grouped property surface while keeping general and provider facts separate;
-- [x] complete final 0.5 regression checks and source release packaging;
-- [x] keep unknown formats neutral and preserve read-only behavior.
+Version 1.0 should mark the point where every format family in `Everything.stuff` has been investigated and receives the deepest evidence-safe inspection that current research supports.
 
-## Next milestone
+That does **not** require every unknown byte in every format to be solved. Unknown fields remain unknown until evidence exists.
 
-### 0.6 — additional format providers
+Before 1.0:
 
-- add factual metadata providers for CHA, ABN, CSK and other prioritized STUFF formats;
-- reuse the shared inspection and fallback system introduced in Version 0.5;
-- add relationships only where binary evidence confirms them;
-- keep unknown fields and unsupported formats neutral instead of guessing.
+- run a complete retail-corpus regression;
+- finish the cohesive file-icon family once the final STUFF format/provider set is stable;
+- keep all archive operations read-only.
 
-## V1.0 — read-only STUFF Explorer
+## First priority after 1.0 — Black & White 2 root integration
 
-- safe archive reader and validation;
-- folder tree, file table and instant search;
-- selective folder/file export and full extraction;
-- the completed 0.3 robustness work;
-- tests against synthetic and user-owned real archives;
-- reproducible Windows release package.
-- design one cohesive file-icon family after the complete STUFF format/provider set has stabilized.
+After the packed STUFF formats are stable, development moves outward to the complete game installation rather than immediately adding richer previews.
 
-## V1.1 — asset inspection
+Planned root work includes:
 
-- DDS preview and technical metadata;
-- hexadecimal/text viewers for unknown formats;
-- improved sorting and file-type filters.
+- open/index loose game files alongside `Everything.stuff`;
+- build one combined asset index across packed and loose sources;
+- resolve cross-source relationships without assuming that STUFF and root data duplicate one another;
+- add evidence-safe providers for important loose formats and configuration data;
+- preserve source identity so users can see whether an asset comes from STUFF or the installation root.
 
-## V2 — mod workspace
+This is the architectural step from a STUFF archive explorer toward a broader Black & White 2 modding workspace.
 
-- keep modifications outside original game archives;
-- project manifests, comparison and conflict detection;
-- safe install/uninstall of loose files.
+## Later milestones
 
-## V3 — optional STUFF writer
+Once STUFF and root assets share one stable inspection model, higher-level tools can build on top of that foundation:
 
-- replace/add/remove entries;
-- rebuild to a new archive without overwriting the original;
-- reopen and byte-verify every generated archive.
+- image preview for DDS, TGA, BMP and `.555`;
+- decoded/text/hex viewers for suitable formats;
+- 3D preview for BWM and later creature formats;
+- export/conversion workflows such as DDS → PNG and BWM → OBJ/FBX;
+- research toward safe model import/round-trip workflows;
+- mod workspace, manifests, comparison and conflict detection;
+- optional writer/import functionality that always writes to a new output and verifies the result.
 
-Photoshop and generative upscaling automation are intentionally outside this project.
+Version numbers for these post-1.0 milestones are intentionally not fixed yet.
+
+## Out of scope
+
+Photoshop, generative upscaling and the separate texture-remaster automation are intentionally outside BW2 Stuff Explorer.
